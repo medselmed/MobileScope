@@ -27,9 +27,26 @@ private val Light = lightColorScheme(
 )
 
 @Composable
-fun MobileScopeTheme(content: @Composable () -> Unit) {
+fun MobileScopeTheme(
+    themeMode: String = "system",
+    accentMode: String = "violet",
+    content: @Composable () -> Unit
+) {
+    val useDark = when (themeMode) {
+        "dark" -> true
+        "light" -> false
+        else -> isSystemInDarkTheme()
+    }
+    val base = if (useDark) Dark else Light
+    val accent = when (accentMode) {
+        "blue" -> Color(0xFF2677F5)
+        "green" -> Color(0xFF159B73)
+        "orange" -> Color(0xFFCE6A12)
+        "cyan" -> Color(0xFF008FA8)
+        else -> if (useDark) Color(0xFF8B7CFF) else Color(0xFF5B49E6)
+    }
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) Dark else Light,
+        colorScheme = base.copy(primary = accent, onPrimary = if (useDark) Color(0xFF0B0E14) else Color.White),
         typography = Typography(),
         content = content
     )

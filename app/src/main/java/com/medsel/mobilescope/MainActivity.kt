@@ -30,12 +30,21 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { MobileScopeTheme { AppRoot() } }
+        setContent {
+            var themeMode by remember { mutableStateOf(Prefs.theme(this@MainActivity)) }
+            var accentMode by remember { mutableStateOf(Prefs.accent(this@MainActivity)) }
+            MobileScopeTheme(themeMode, accentMode) {
+                AppRoot(
+                    onThemeChanged = { themeMode = it },
+                    onAccentChanged = { accentMode = it }
+                )
+            }
+        }
     }
 }
 
 @Composable
-fun AppRoot() {
+fun AppRoot(onThemeChanged: (String) -> Unit, onAccentChanged: (String) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var user by remember { mutableStateOf(Prefs.load(ctx)) }
@@ -57,24 +66,37 @@ fun AppRoot() {
                 label = "nav"
             ) { r ->
                 val back = { route = "home" }
-                when (if (r == "home") null else Cat.valueOf(r)) {
-                    null -> HomeScreen(
-                        u, onOpen = { route = it.name },
+                when (r) {
+                    "home" -> HomeScreen(
+                        user = u,
+                        onOpen = { route = it.name },
+                        onOpenSettings = { route = "settings" },
+                        onOpenDevice = { route = "device" },
                         onSignOut = {
                             scope.launch {
                                 runCatching { CredentialManager.create(ctx).clearCredentialState(ClearCredentialStateRequest()) }
-                                Prefs.clear(ctx); user = null; route = "home"
+                                Prefs.clear(ctx)
+                                user = null
+                                route = "home"
                             }
                         }
                     )
-                    Cat.Contacts -> ContactsScreen(back)
-                    Cat.Calls -> CallsScreen(back)
-                    Cat.Sms -> SmsScreen(back)
-                    Cat.Network -> NetworkScreen(back)
-                    Cat.Storage -> StorageScreen(back)
-                    Cat.Ram -> RamScreen(back)
-                    Cat.Battery -> BatteryScreen(back)
-                    Cat.Apps -> AppsScreen(back)
+                    "settings" -> SettingsScreen(
+                        onBack = back,
+                        onThemeChanged = onThemeChanged,
+                        onAccentChanged = onAccentChanged
+                    )
+                    "device" -> DeviceDetailsScreen(onBack = back)
+                    else -> when (Cat.valueOf(r)) {
+                        Cat.Contacts -> ContactsScreen(back)
+                        Cat.Calls -> CallsScreen(back)
+                        Cat.Sms -> SmsScreen(back)
+                        Cat.Network -> NetworkScreen(back)
+                        Cat.Storage -> StorageScreen(back)
+                        Cat.Ram -> RamScreen(back)
+                        Cat.Battery -> BatteryScreen(back)
+                        Cat.Apps -> AppsScreen(back)
+                    }
                 }
             }
         }

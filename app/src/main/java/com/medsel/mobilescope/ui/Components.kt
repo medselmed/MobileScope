@@ -125,21 +125,36 @@ fun Ring(
 }
 
 @Composable
-fun Sparkline(values: List<Float>, color: Color, modifier: Modifier = Modifier.fillMaxWidth().height(64.dp)) {
+fun Sparkline(
+    values: List<Float>,
+    color: Color,
+    modifier: Modifier = Modifier.fillMaxWidth().height(64.dp),
+    minValue: Float? = null,
+    maxValue: Float? = null
+) {
     Canvas(modifier) {
         if (values.size < 2) return@Canvas
-        val mx = values.max(); val mn = values.min()
-        val range = (mx - mn).coerceAtLeast(mx * 0.05f).coerceAtLeast(0.0001f)
+        val mn = minValue ?: values.min()
+        val mx = maxValue ?: values.max()
+        val range = (mx - mn).coerceAtLeast(0.0001f)
         val dx = size.width / (values.size - 1)
-        val line = Path(); val fill = Path()
+        val line = Path()
+        val fill = Path()
+        // Repères horizontaux pour donner une échelle lisible au graphique.
+        for (step in 0..2) {
+            val y = size.height * (0.1f + step * 0.4f)
+            drawLine(color.copy(alpha = .12f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1.dp.toPx())
+        }
         values.forEachIndexed { i, v ->
             val x = i * dx
-            val y = size.height * 0.95f - ((v - mn) / range) * size.height * 0.85f
+            val fraction = ((v - mn) / range).coerceIn(0f, 1f)
+            val y = size.height * 0.9f - fraction * size.height * 0.8f
             if (i == 0) { line.moveTo(x, y); fill.moveTo(x, size.height); fill.lineTo(x, y) }
             else { line.lineTo(x, y); fill.lineTo(x, y) }
         }
-        fill.lineTo(size.width, size.height); fill.close()
-        drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = .28f), Color.Transparent)))
+        fill.lineTo(size.width, size.height)
+        fill.close()
+        drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = .22f), Color.Transparent)))
         drawPath(line, color, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }

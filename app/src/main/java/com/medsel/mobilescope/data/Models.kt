@@ -51,20 +51,29 @@ data class AppsReport(
     val screenMs: Long, val top: List<AppUsage>, val newest: List<InstalledApp>
 )
 
-data class ContactItem(val id: Long, val name: String, val number: String?)
+data class ContactItem(
+    val id: Long, val name: String, val number: String?,
+    val hasEmail: Boolean = false, val starred: Boolean = false, val duplicateNumber: Boolean = false
+)
 data class ContactsReport(
     val total: Int, val withPhone: Int, val withEmail: Int, val starred: Int,
-    val dupNumbers: Int, val favorites: List<ContactItem>
+    val dupNumbers: Int, val favorites: List<ContactItem>, val contacts: List<ContactItem>
 )
 
 data class TopContact(val name: String, val number: String, val count: Int, val seconds: Long)
+data class CallEntry(
+    val number: String, val name: String, val type: Int, val date: Long, val durationSec: Long
+)
 data class CallsReport(
     val total: Int, val incoming: Int, val outgoing: Int, val missed: Int, val rejected: Int,
-    val inSec: Long, val outSec: Long, val longest: Long, val perDay: List<Int>, val top: List<TopContact>
+    val inSec: Long, val outSec: Long, val longest: Long, val perDay: List<Int>, val top: List<TopContact>,
+    val dayLabels: List<String> = emptyList(),
+    val missedCalls: List<CallEntry> = emptyList(), val rejectedCalls: List<CallEntry> = emptyList()
 )
 data class SmsReport(
     val received: Int, val sent: Int, val charsReceived: Long, val charsSent: Long,
-    val recvPerDay: List<Int>, val sentPerDay: List<Int>, val top: List<TopContact>
+    val recvPerDay: List<Int>, val sentPerDay: List<Int>, val top: List<TopContact>,
+    val dayLabels: List<String> = emptyList()
 )
 
 object Fmt {
