@@ -32,15 +32,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             var themeMode by remember { mutableStateOf(Prefs.theme(this@MainActivity)) }
-            MobileScopeTheme(themeMode) {
-                AppRoot(onThemeChanged = { themeMode = it })
+            var accentMode by remember { mutableStateOf(Prefs.accent(this@MainActivity)) }
+            MobileScopeTheme(themeMode, accentMode) {
+                AppRoot(
+                    onThemeChanged = { themeMode = it },
+                    onAccentChanged = { accentMode = it }
+                )
             }
         }
     }
 }
 
 @Composable
-fun AppRoot(onThemeChanged: (String) -> Unit) {
+fun AppRoot(onThemeChanged: (String) -> Unit, onAccentChanged: (String) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var user by remember { mutableStateOf(Prefs.load(ctx)) }
@@ -77,7 +81,11 @@ fun AppRoot(onThemeChanged: (String) -> Unit) {
                             }
                         }
                     )
-                    "settings" -> SettingsScreen(onBack = back, onThemeChanged = onThemeChanged)
+                    "settings" -> SettingsScreen(
+                        onBack = back,
+                        onThemeChanged = onThemeChanged,
+                        onAccentChanged = onAccentChanged
+                    )
                     "device" -> DeviceDetailsScreen(onBack = back)
                     else -> when (Cat.valueOf(r)) {
                         Cat.Contacts -> ContactsScreen(back)
