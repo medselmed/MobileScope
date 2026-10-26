@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.provider.ContactsContract
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -334,39 +336,128 @@ fun ContactsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cat = Cat.Contacts
     var tick by remember { mutableIntStateOf(0) }
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf("Tous") }
+    var limit by remember { mutableIntStateOf(100) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_CONTACTS),
-            "MobileScope lit votre carnet pour compter vos contacts, repérer les doublons et afficher vos favoris. Les données restent sur l'appareil.") {
+            "MobileScope lit votre carnet pour afficher les fiches, les numéros, les e-mails, les favoris et les cas particuliers. Les données restent sur l'appareil.") {
             val st by loadState(tick) { Collectors.contacts(ctx) }
             Loaded(st) { r ->
                 val frac = if (r.total > 0) r.withPhone.toFloat() / r.total else 0f
-                Hero(cat.color, frac, "${Fmt.pct(frac)} ont un numéro", "${r.withEmail} contacts ont un e-mail, ${r.starred} sont en favoris.") {
+                Hero(cat.color, frac, "${Fmt.pct(frac)} ont un numéro",
+                    "${r.withEmail} avec e-mail · ${r.starred} favoris · ${r.dupNumbers} groupes de numéros en doublon.") {
                     BigValue("${r.total}", "contacts")
                 }
                 TilesGrid(listOf(
                     Tile("Avec numéro", "${r.withPhone}", Icons.Rounded.Call),
+                    Tile("Sans numéro", "${r.total - r.withPhone}", Icons.Rounded.PersonOff),
                     Tile("Avec e-mail", "${r.withEmail}", Icons.Rounded.Email),
                     Tile("Favoris", "${r.starred}", Icons.Rounded.Star),
                     Tile("Numéros en doublon", "${r.dupNumbers}", Icons.Rounded.ContentCopy)
                 ), cat.color)
-                if (r.favorites.isNotEmpty()) {
-                    SectionTitle("Favoris")
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it; limit = 100 },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(15.dp),
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotBlank()) IconButton(onClick = { query = ""; limit = 100 }) {
+                            Icon(Icons.Rounded.Close, "Effacer")
+                        }
+                    },
+                    placeholder = { Text("Rechercher un nom ou un numéro…") }
+                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Tous", "Favoris", "Sans numéro", "Avec e-mail", "Doublons").forEach { option ->
+                        FilterChip(
+                            selected = filter == option,
+                            onClick = { filter = option; limit = 100 },
+                            label = { Text(option) }
+                        )
+                    }
+                }
+                val filtered = r.contacts.filter { contact ->
+                    val matchesQuery = query.isBlank() ||
+                        contact.name.contains(query, ignoreCase = true) ||
+                        (contact.number?.contains(query, ignoreCase = true) == true)
+                    val matchesFilter = when (filter) {
+                        "Favoris" -> contact.starred
+                        "Sans numéro" -> contact.number.isNullOrBlank()
+                        "Avec e-mail" -> contact.hasEmail
+                        "Doublons" -> contact.duplicateNumber
+                        else -> true
+                    }
+                    matchesQuery && matchesFilter
+                }
+                SectionTitle("Contacts (${filtered.size})")
+                if (filtered.isEmpty()) {
                     Panel {
-                        r.favorites.forEach { c ->
-                            Row(Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(38.dp).clip(CircleShape).background(cat.color.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
-                                    Text(c.name.take(1).uppercase(), color = cat.color, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Rounded.PersonSearch, null, tint = muted, modifier = Modifier.size(30.dp))
+                        Text("Aucun contact correspondant", fontWeight = FontWeight.SemiBold)
+                        Text("Changez le filtre ou la recherche.", fontSize = 12.sp, color = muted)
+                    }
+                } else {
+                    Panel {
+                        filtered.take(limit).forEachIndexed { index, contact ->
+                            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .25f))
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    runCatching {
+                                        ctx.startActivity(Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contact.id.toString())
+                                        ))
+                                    }
+                                }.padding(vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.size(42.dp).clip(CircleShape)
+                                        .background(cat.color.copy(alpha = .15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(contact.name.firstOrNull()?.uppercase() ?: "?", color = cat.color, fontWeight = FontWeight.Bold)
                                 }
-                                Spacer(Modifier.width(12.dp))
+                                Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(c.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (c.number != null) Text(c.number, fontSize = 12.sp, color = muted)
+                                    Text(contact.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        contact.number ?: "Aucun numéro enregistré",
+                                        fontSize = 12.sp,
+                                        color = if (contact.number == null) MaterialTheme.colorScheme.error else muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val tags = buildList {
+                                        if (contact.starred) add("Favori")
+                                        if (contact.hasEmail) add("E-mail")
+                                        if (contact.duplicateNumber) add("Numéro en doublon")
+                                        if (contact.number == null) add("Cas à compléter")
+                                    }
+                                    if (tags.isNotEmpty()) Text(tags.joinToString(" · "), fontSize = 10.sp, color = cat.color, maxLines = 1)
                                 }
-                                if (c.number != null) QuickActions(c.number, cat.color)
+                                if (!contact.number.isNullOrBlank()) QuickActions(contact.number, cat.color)
+                                else Icon(Icons.Rounded.ChevronRight, "Ouvrir la fiche", tint = muted)
                             }
                         }
                     }
+                    if (filtered.size > limit) {
+                        TextButton(onClick = { limit += 100 }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                            Text("Afficher davantage (${limit}/${filtered.size})")
+                        }
+                    }
                 }
+                Text(
+                    "Touchez une ligne pour ouvrir la fiche native du contact. Les contacts sans numéro restent accessibles pour être complétés.",
+                    fontSize = 12.sp, color = muted
+                )
             }
         }
     }
@@ -606,9 +697,17 @@ fun RamScreen(onBack: () -> Unit) {
                 BigValue(Fmt.pct(r.usedFrac), "en direct")
             }
             Panel {
-                Text("Occupation, 80 dernières secondes", fontSize = 13.sp, color = muted)
+                val samples = history.toList()
+                Text("Utilisation de la RAM · 80 dernières secondes", fontSize = 13.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
-                Sparkline(history.toList(), cat.color, Modifier.fillMaxWidth().height(90.dp))
+                Sparkline(samples, cat.color, Modifier.fillMaxWidth().height(100.dp), minValue = 0f, maxValue = 100f)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Min. ${samples.minOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} %", fontSize = 11.sp, color = muted)
+                    Text("Actuel ${"%.1f".format(Locale.getDefault(), r.usedFrac * 100f)} %", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cat.color)
+                    Text("Max. ${samples.maxOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} %", fontSize = 11.sp, color = muted)
+                }
+                Text("Échelle fixe : 0 à 100 % · un point toutes les 2 secondes.", fontSize = 11.sp, color = muted)
             }
             TilesGrid(listOf(
                 Tile("Totale", Fmt.bytes(r.total), Icons.Rounded.Memory),
@@ -648,9 +747,17 @@ fun BatteryScreen(onBack: () -> Unit) {
                 BigValue("${r.percent}%", if (r.charging) "en charge" else "restant")
             }
             Panel {
-                Text("Température en direct", fontSize = 13.sp, color = muted)
+                val samples = history.toList()
+                Text("Température de la batterie · 2 dernières minutes", fontSize = 13.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
-                Sparkline(history.toList(), cat.color, Modifier.fillMaxWidth().height(80.dp))
+                Sparkline(samples, cat.color, Modifier.fillMaxWidth().height(96.dp), minValue = 10f, maxValue = 60f)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Min. ${samples.minOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} °C", fontSize = 11.sp, color = muted)
+                    Text("Actuelle ${"%.1f".format(Locale.getDefault(), r.tempC)} °C", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cat.color)
+                    Text("Max. ${samples.maxOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} °C", fontSize = 11.sp, color = muted)
+                }
+                Text("Échelle fixe : 10 à 60 °C · un point toutes les 3 secondes.", fontSize = 11.sp, color = muted)
             }
             TilesGrid(listOf(
                 Tile("Température", "${"%.1f".format(Locale.getDefault(), r.tempC)} °C", Icons.Rounded.Thermostat),
