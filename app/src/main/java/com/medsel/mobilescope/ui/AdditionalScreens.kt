@@ -25,9 +25,14 @@ import com.medsel.mobilescope.data.Fmt
 import com.medsel.mobilescope.data.Prefs
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (String) -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onThemeChanged: (String) -> Unit,
+    onAccentChanged: (String) -> Unit
+) {
     val ctx = LocalContext.current
     var theme by remember { mutableStateOf(Prefs.theme(ctx)) }
+    var accent by remember { mutableStateOf(Prefs.accent(ctx)) }
     var compact by remember { mutableStateOf(Prefs.compactCards(ctx)) }
 
     Column(
@@ -72,6 +77,45 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (String) -> Unit) {
                         })
                         Spacer(Modifier.width(8.dp))
                         Text(label, modifier = Modifier.weight(1f))
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Couleur principale", fontWeight = FontWeight.SemiBold)
+                Text("Appliquée aux boutons et aux éléments de navigation.", fontSize = 12.sp, color = muted)
+                listOf(
+                    "violet" to "Violet",
+                    "blue" to "Bleu",
+                    "green" to "Vert",
+                    "orange" to "Orange",
+                    "cyan" to "Turquoise"
+                ).forEach { (value, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                accent = value
+                                Prefs.saveAccent(ctx, value)
+                                onAccentChanged(value)
+                            }.padding(vertical = 5.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = accent == value, onClick = {
+                            accent = value
+                            Prefs.saveAccent(ctx, value)
+                            onAccentChanged(value)
+                        })
+                        Spacer(Modifier.width(8.dp))
+                        Text(label, modifier = Modifier.weight(1f))
+                        Box(
+                            Modifier.size(20.dp).clip(CircleShape).background(
+                                when (value) {
+                                    "blue" -> androidx.compose.ui.graphics.Color(0xFF2677F5)
+                                    "green" -> androidx.compose.ui.graphics.Color(0xFF159B73)
+                                    "orange" -> androidx.compose.ui.graphics.Color(0xFFCE6A12)
+                                    "cyan" -> androidx.compose.ui.graphics.Color(0xFF008FA8)
+                                    else -> androidx.compose.ui.graphics.Color(0xFF8B7CFF)
+                                }
+                            )
+                        )
                     }
                 }
                 HorizontalDivider()
