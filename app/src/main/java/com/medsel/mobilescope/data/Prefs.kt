@@ -29,5 +29,14 @@ object Prefs {
         settings(ctx).edit().putBoolean("compact_cards", value).apply()
     }
 
+    fun favoriteModules(ctx: Context): Set<String> =
+        settings(ctx).getStringSet("favorite_modules", emptySet())?.toSet() ?: emptySet()
+
+    fun toggleFavoriteModule(ctx: Context, module: String) {
+        val favorites = favoriteModules(ctx).toMutableSet()
+        if (module in favorites) favorites.remove(module) else favorites.add(module)
+        settings(ctx).edit().putStringSet("favorite_modules", favorites).apply()
+    }
+
     fun clear(ctx: Context) { sp(ctx).edit().clear().apply() }
 }
