@@ -73,6 +73,7 @@ private fun pickerMillisToLocalDay(timestamp: Long): Long {
     }.timeInMillis
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DateRangeSelector(
     startMs: Long,
@@ -214,10 +215,10 @@ private fun QuickControlsCard() {
         val controls: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, () -> Unit>> = listOf(
             Triple("Wi-Fi", Icons.Rounded.Wifi, { open(Settings.Panel.ACTION_WIFI, Settings.ACTION_WIFI_SETTINGS) }),
             Triple("Internet", Icons.Rounded.SignalCellularAlt, { open(Settings.Panel.ACTION_INTERNET_CONNECTIVITY, Settings.ACTION_WIRELESS_SETTINGS) }),
-            Triple("Hotspot", Icons.Rounded.WifiTethering, { open(Settings.ACTION_TETHER_SETTINGS, Settings.ACTION_WIRELESS_SETTINGS) }),
+            Triple("Hotspot", Icons.Rounded.WifiTethering, { open("android.settings.TETHER_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS) }),
             Triple("Bluetooth", Icons.Rounded.Bluetooth, {
                 if (!bluetoothGranted && Build.VERSION.SDK_INT >= 31) bluetoothPermissionLauncher.launch(bluetoothPermission)
-                else open(Settings.Panel.ACTION_BLUETOOTH, Settings.ACTION_BLUETOOTH_SETTINGS)
+                else open("android.settings.panel.action.BLUETOOTH", Settings.ACTION_BLUETOOTH_SETTINGS)
             }),
             Triple("Son", Icons.Rounded.VolumeUp, { open(Settings.ACTION_SOUND_SETTINGS, Settings.ACTION_SETTINGS) }),
             Triple("Luminosité", Icons.Rounded.Brightness6, { open(Settings.ACTION_DISPLAY_SETTINGS, Settings.ACTION_SETTINGS) })
