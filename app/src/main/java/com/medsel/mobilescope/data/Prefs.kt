@@ -23,6 +23,12 @@ object Prefs {
         settings(ctx).edit().putString("theme_mode", value).apply()
     }
 
+    fun accent(ctx: Context): String = settings(ctx).getString("accent_color", "violet") ?: "violet"
+
+    fun saveAccent(ctx: Context, value: String) {
+        settings(ctx).edit().putString("accent_color", value).apply()
+    }
+
     fun compactCards(ctx: Context): Boolean = settings(ctx).getBoolean("compact_cards", false)
 
     fun saveCompactCards(ctx: Context, value: Boolean) {
