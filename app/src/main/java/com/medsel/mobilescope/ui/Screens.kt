@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.medsel.mobilescope.data.Collectors
 import com.medsel.mobilescope.data.Fmt
+import com.medsel.mobilescope.data.Prefs
 import com.medsel.mobilescope.data.TopContact
 import com.medsel.mobilescope.data.User
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +51,7 @@ fun HomeScreen(
     onSignOut: () -> Unit
 ) {
     val ctx = LocalContext.current
+    val compactCards = Prefs.compactCards(ctx)
     val deviceState by loadState(0) { Collectors.device(ctx) }
 
     Column(
@@ -167,7 +169,7 @@ fun HomeScreen(
                                 .background(MaterialTheme.colorScheme.surface)
                                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
                                 .clickable { onOpen(cat) }
-                                .padding(14.dp)
+                                .padding(if (compactCards) 10.dp else 14.dp)
                         ) {
                             Row(verticalAlignment = Alignment.Top) {
                                 Box(
