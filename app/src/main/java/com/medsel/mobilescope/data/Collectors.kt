@@ -244,7 +244,7 @@ object Collectors {
         }.filter { it.total > 0 }.sortedByDescending { it.total }.take(10)
     }
 
-    fun network(ctx: Context): NetReport {
+    fun network(ctx: Context, startDateMs: Long = midnight(6), endDateMs: Long = System.currentTimeMillis()): NetReport {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val caps = cm.getNetworkCapabilities(cm.activeNetwork)
         val type = when {
@@ -271,19 +271,21 @@ object Collectors {
         if (access) {
             val nsm = ctx.getSystemService(Context.NETWORK_STATS_SERVICE) as NetworkStatsManager
             val now = System.currentTimeMillis()
-            periods = listOf("Aujourd'hui" to 0, "7 jours" to 6, "30 jours" to 29).map { (lbl, back) ->
-                val s = midnight(back)
-                Period(lbl,
-                    summary(nsm, ConnectivityManager.TYPE_WIFI, s, now),
-                    summary(nsm, ConnectivityManager.TYPE_MOBILE, s, now),
-                    topApps(ctx, nsm, s, now))
-            }
-            val labels = dayLabels(7)
-            days = (6 downTo 0).map { d ->
-                val s = midnight(d); val e = if (d == 0) now else midnight(d - 1)
-                DayTraffic(labels[6 - d],
-                    summary(nsm, ConnectivityManager.TYPE_WIFI, s, e).total,
-                    summary(nsm, ConnectivityManager.TYPE_MOBILE, s, e).total)
+            val selectedStart = normalizeDay(minOf(startDateMs, endDateMs))
+            val selectedEnd = normalizeDay(maxOf(startDateMs, endDateMs))
+            val selectedEndExclusive = nextDay(selectedEnd)
+            periods = listOf(Period(
+                "Période sélectionnée",
+                summary(nsm, ConnectivityManager.TYPE_WIFI, selectedStart, selectedEndExclusive),
+                summary(nsm, ConnectivityManager.TYPE_MOBILE, selectedStart, selectedEndExclusive),
+                topApps(ctx, nsm, selectedStart, selectedEndExclusive)
+            ))
+            val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
+            days = rangeDays(selectedStart, selectedEnd).map { d ->
+                val e = nextDay(d).coerceAtMost(selectedEndExclusive)
+                DayTraffic(fmt.format(Date(d)),
+                    summary(nsm, ConnectivityManager.TYPE_WIFI, d, e).total,
+                    summary(nsm, ConnectivityManager.TYPE_MOBILE, d, e).total)
             }
         }
         return NetReport(type, caps != null, caps?.linkDownstreamBandwidthKbps ?: 0, caps?.linkUpstreamBandwidthKbps ?: 0,
@@ -291,7 +293,7 @@ object Collectors {
     }
 
     // ---------- applications ----------
-    fun apps(ctx: Context): AppsReport {
+    fun apps(ctx: Context, startDateMs: Long = midnight(6), endDateMs: Long = System.currentTimeMillis()): AppsReport {
         val pm = ctx.packageManager
         val all = pm.getInstalledApplications(0)
         val sys = all.count { (it.flags and ApplicationInfo.FLAG_SYSTEM) != 0 }
@@ -306,7 +308,9 @@ object Collectors {
         val top = ArrayList<AppUsage>()
         if (access) {
             val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-            val map = usm.queryAndAggregateUsageStats(midnight(6), System.currentTimeMillis())
+            val usageStart = normalizeDay(minOf(startDateMs, endDateMs))
+            val usageEnd = nextDay(normalizeDay(maxOf(startDateMs, endDateMs)))
+            val map = usm.queryAndAggregateUsageStats(usageStart, usageEnd)
             for ((pkg, st) in map) {
                 val fg = st.totalTimeInForeground
                 if (fg > 0) { screen += fg; top.add(AppUsage(pkg, label(pm, pkg), fg, st.lastTimeUsed)) }
