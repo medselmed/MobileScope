@@ -1,10 +1,20 @@
 package com.medsel.mobilescope.ui
 
 import android.Manifest
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -136,6 +146,110 @@ private fun DateRangeSelector(
     }
 }
 
+
+@Composable
+private fun QuickControlsCard() {
+    val ctx = LocalContext.current
+    val resume = rememberResumeTick()
+    val bluetoothPermission = if (Build.VERSION.SDK_INT >= 31) Manifest.permission.BLUETOOTH_CONNECT else Manifest.permission.BLUETOOTH
+    var bluetoothGranted by remember {
+        mutableStateOf(Build.VERSION.SDK_INT < 31 || ctx.checkSelfPermission(bluetoothPermission) == PackageManager.PERMISSION_GRANTED)
+    }
+    val bluetoothPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        bluetoothGranted = it
+    }
+    val wifiEnabled = runCatching {
+        (ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).isWifiEnabled
+    }.getOrNull()
+    val connectivity = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val caps = runCatching { connectivity.getNetworkCapabilities(connectivity.activeNetwork) }.getOrNull()
+    val wifiConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    val mobileConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+    val bluetoothEnabled = if (bluetoothGranted) runCatching {
+        (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.isEnabled
+    }.getOrNull() else null
+    val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    val ringer = when (audio.ringerMode) {
+        AudioManager.RINGER_MODE_SILENT -> "Silencieux"
+        AudioManager.RINGER_MODE_VIBRATE -> "Vibreur"
+        else -> "Sonnerie"
+    }
+    val brightness = runCatching {
+        android.provider.Settings.System.getInt(ctx.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
+            .let { "${(it / 255f * 100).toInt()} %" }
+    }.getOrDefault("—")
+    fun open(action: String, fallback: String? = null) {
+        runCatching {
+            ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            if (fallback != null) runCatching { ctx.startActivity(Intent(fallback).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Commandes rapides", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("État actuel et accès aux réglages Android", fontSize = 12.sp, color = muted)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        QuickStatusRow(Icons.Rounded.Wifi, "Wi-Fi", when (wifiEnabled) {
+            true -> if (wifiConnected) "Activé · connecté" else "Activé · non connecté"
+            false -> "Désactivé"
+            else -> "État indisponible"
+        }, wifiEnabled == true)
+        QuickStatusRow(Icons.Rounded.SignalCellularAlt, "Données mobiles", if (mobileConnected) "Connexion mobile active" else "Pas de connexion mobile active", mobileConnected)
+        QuickStatusRow(Icons.Rounded.WifiTethering, "Hotspot", "État à vérifier dans Android", false)
+        QuickStatusRow(Icons.Rounded.Bluetooth, "Bluetooth", when (bluetoothEnabled) {
+            true -> "Activé"
+            false -> "Désactivé"
+            null -> if (bluetoothGranted) "État indisponible" else "Autorisation nécessaire"
+        }, bluetoothEnabled == true)
+        QuickStatusRow(Icons.Rounded.VolumeUp, "Son", ringer, audio.ringerMode == AudioManager.RINGER_MODE_NORMAL)
+        QuickStatusRow(Icons.Rounded.Brightness6, "Luminosité", brightness, false)
+        Text("Android réserve certaines bascules (notamment données mobiles et hotspot) au panneau système. Ces raccourcis ouvrent les réglages officiels sans contourner ces protections.", fontSize = 11.sp, color = muted)
+        Spacer(Modifier.height(8.dp))
+        val controls: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, () -> Unit>> = listOf(
+            Triple("Wi-Fi", Icons.Rounded.Wifi, { open(Settings.Panel.ACTION_WIFI, Settings.ACTION_WIFI_SETTINGS) }),
+            Triple("Internet", Icons.Rounded.SignalCellularAlt, { open(Settings.Panel.ACTION_INTERNET_CONNECTIVITY, Settings.ACTION_WIRELESS_SETTINGS) }),
+            Triple("Hotspot", Icons.Rounded.WifiTethering, { open(Settings.ACTION_TETHER_SETTINGS, Settings.ACTION_WIRELESS_SETTINGS) }),
+            Triple("Bluetooth", Icons.Rounded.Bluetooth, {
+                if (!bluetoothGranted && Build.VERSION.SDK_INT >= 31) bluetoothPermissionLauncher.launch(bluetoothPermission)
+                else open(Settings.Panel.ACTION_BLUETOOTH, Settings.ACTION_BLUETOOTH_SETTINGS)
+            }),
+            Triple("Son", Icons.Rounded.VolumeUp, { open(Settings.ACTION_SOUND_SETTINGS, Settings.ACTION_SETTINGS) }),
+            Triple("Luminosité", Icons.Rounded.Brightness6, { open(Settings.ACTION_DISPLAY_SETTINGS, Settings.ACTION_SETTINGS) })
+        )
+        controls.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (label, icon, action) ->
+                    OutlinedButton(onClick = action, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(icon, null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.height(3.dp))
+                            Text(label, fontSize = 10.sp, maxLines = 1)
+                        }
+                    }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickStatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, active: Boolean) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (active) MaterialTheme.colorScheme.primary else muted, modifier = Modifier.size(19.dp))
+        Spacer(Modifier.width(9.dp))
+        Text(label, modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(value, fontSize = 11.sp, color = if (active) MaterialTheme.colorScheme.primary else muted, maxLines = 2)
+    }
+}
+
+
 // =============== ACCUEIL ===============
 @Composable
 fun HomeScreen(
@@ -251,6 +365,8 @@ fun HomeScreen(
                     }
                 }
             }
+
+            QuickControlsCard()
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
