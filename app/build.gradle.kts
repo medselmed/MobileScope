@@ -7,10 +7,8 @@ plugins {
 // Numéro de build fourni par GitHub Actions : il devient versionCode (1.0.N)
 val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 val githubRepo = System.getenv("GITHUB_REPOSITORY") ?: "OWNER/REPO"
-val webClientId = (System.getenv("WEB_CLIENT_ID") ?: "").trim()
-if (webClientId.isEmpty() || webClientId == "REPLACE_ME") {
-    throw GradleException("WEB_CLIENT_ID absent ou vide : renseignez le secret GitHub avec le client OAuth Web complet.")
-}
+// Client OAuth Web fourni pour la connexion Google (serverClientId).
+val webClientId = "415694707654-nbf1quucdr4nju1v4aipjbt8n2ohtk0d.apps.googleusercontent.com"
 
 android {
     namespace = "com.medsel.mobilescope"
