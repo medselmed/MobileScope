@@ -1,6 +1,9 @@
 package com.medsel.mobilescope.ui
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -195,6 +198,11 @@ fun HomeScreen(
                                             leadingIcon = { Icon(Icons.Rounded.Info, null) },
                                             onClick = { menuExpanded = false; infoOpen = true }
                                         )
+                                        DropdownMenuItem(
+                                            text = { Text("Réglages associés") },
+                                            leadingIcon = { Icon(Icons.Rounded.Settings, null) },
+                                            onClick = { menuExpanded = false; openModuleSettings(ctx, cat) }
+                                        )
                                     }
                                 }
                             }
@@ -249,6 +257,21 @@ fun HomeScreen(
             }
         }
     }
+}
+
+
+private fun openModuleSettings(ctx: android.content.Context, cat: Cat) {
+    val intent = when (cat) {
+        Cat.Network -> Intent(Settings.ACTION_WIFI_SETTINGS)
+        Cat.Battery -> Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+        Cat.Apps, Cat.Ram -> Intent(Settings.ACTION_APPLICATION_SETTINGS)
+        Cat.Storage -> Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+        Cat.Contacts, Cat.Calls, Cat.Sms -> Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${ctx.packageName}")
+        )
+    }
+    runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 // =============== CONTACTS ===============
