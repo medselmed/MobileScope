@@ -51,10 +51,13 @@ data class AppsReport(
     val screenMs: Long, val top: List<AppUsage>, val newest: List<InstalledApp>
 )
 
-data class ContactItem(val id: Long, val name: String, val number: String?)
+data class ContactItem(
+    val id: Long, val name: String, val number: String?,
+    val hasEmail: Boolean = false, val starred: Boolean = false, val duplicateNumber: Boolean = false
+)
 data class ContactsReport(
     val total: Int, val withPhone: Int, val withEmail: Int, val starred: Int,
-    val dupNumbers: Int, val favorites: List<ContactItem>
+    val dupNumbers: Int, val favorites: List<ContactItem>, val contacts: List<ContactItem>
 )
 
 data class TopContact(val name: String, val number: String, val count: Int, val seconds: Long)
