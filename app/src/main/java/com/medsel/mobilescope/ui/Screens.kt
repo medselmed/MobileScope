@@ -351,7 +351,7 @@ fun ContactsScreen(onBack: () -> Unit) {
                 }
                 TilesGrid(listOf(
                     Tile("Avec numéro", "${r.withPhone}", Icons.Rounded.Call),
-                    Tile("Sans numéro", "${r.total - r.withPhone}", Icons.Rounded.PersonOff),
+                    Tile("Sans numéro", "${r.total - r.withPhone}", Icons.Rounded.Person),
                     Tile("Avec e-mail", "${r.withEmail}", Icons.Rounded.Email),
                     Tile("Favoris", "${r.starred}", Icons.Rounded.Star),
                     Tile("Numéros en doublon", "${r.dupNumbers}", Icons.Rounded.ContentCopy)
@@ -399,7 +399,7 @@ fun ContactsScreen(onBack: () -> Unit) {
                 SectionTitle("Contacts (${filtered.size})")
                 if (filtered.isEmpty()) {
                     Panel {
-                        Icon(Icons.Rounded.PersonSearch, null, tint = muted, modifier = Modifier.size(30.dp))
+                        Icon(Icons.Rounded.Search, null, tint = muted, modifier = Modifier.size(30.dp))
                         Text("Aucun contact correspondant", fontWeight = FontWeight.SemiBold)
                         Text("Changez le filtre ou la recherche.", fontSize = 12.sp, color = muted)
                     }
@@ -519,6 +519,7 @@ fun SmsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cat = Cat.Sms
     var tick by remember { mutableIntStateOf(0) }
+    var smsView by remember { mutableIntStateOf(0) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_SMS),
             "MobileScope compte vos SMS reçus et envoyés sur 30 jours. Le contenu des messages n'est jamais affiché ni transmis, seule leur longueur est mesurée.") {
@@ -537,15 +538,27 @@ fun SmsScreen(onBack: () -> Unit) {
                     Tile("Caractères envoyés", "${r.charsSent}")
                 ), cat.color)
                 SectionTitle("Activité sur 7 jours")
+                Segmented(listOf("Reçus + envoyés", "Reçus", "Envoyés"), smsView, cat.color) { smsView = it }
                 Panel {
                     val labels = Collectors.dayLabels(7)
-                    BarChart(
-                        r.recvPerDay.indices.map { Bar(labels[it], listOf(r.recvPerDay[it].toFloat(), r.sentPerDay[it].toFloat())) },
-                        listOf(cat.color, cat.color.copy(alpha = .4f))
-                    )
+                    val bars = r.recvPerDay.indices.map { i ->
+                        val parts = when (smsView) {
+                            1 -> listOf(r.recvPerDay[i].toFloat())
+                            2 -> listOf(r.sentPerDay[i].toFloat())
+                            else -> listOf(r.recvPerDay[i].toFloat(), r.sentPerDay[i].toFloat())
+                        }
+                        Bar(labels[i], parts)
+                    }
+                    val colors = when (smsView) {
+                        1 -> listOf(cat.color)
+                        2 -> listOf(cat.color.copy(alpha = .48f))
+                        else -> listOf(cat.color, cat.color.copy(alpha = .48f))
+                    }
+                    BarChart(bars, colors)
                     Spacer(Modifier.height(12.dp))
-                    Legend(cat.color, "Reçus", "${r.recvPerDay.sum()}")
-                    Legend(cat.color.copy(alpha = .4f), "Envoyés", "${r.sentPerDay.sum()}")
+                    if (smsView != 2) Legend(cat.color, "Reçus", "${r.recvPerDay.sum()}")
+                    if (smsView != 1) Legend(cat.color.copy(alpha = .48f), "Envoyés", "${r.sentPerDay.sum()}")
+                    Text("Chaque barre représente le nombre de SMS par jour. Période : 7 derniers jours.", fontSize = 11.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Correspondants les plus actifs")
