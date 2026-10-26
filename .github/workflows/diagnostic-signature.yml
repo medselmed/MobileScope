@@ -2,6 +2,9 @@ name: Diagnostic SHA-1 de signature
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnostic-signature.yml'
 
 permissions:
   contents: read
