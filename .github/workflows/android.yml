@@ -1,0 +1,51 @@
+name: Build & publier l'APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mobilescope-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Compiler l'APK signé
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Configurer Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Autoriser le wrapper Gradle
+        run: chmod +x ./gradlew
+
+      - name: Compiler l'APK release
+        env:
+          WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Publier la release et l'APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          gh release create "v1.0.$BUILD_NUMBER" "$APK#MobileScope-1.0.$BUILD_NUMBER.apk" \
+            --title "MobileScope 1.0.$BUILD_NUMBER" \
+            --notes "Compilation automatique depuis le commit $GITHUB_SHA."
