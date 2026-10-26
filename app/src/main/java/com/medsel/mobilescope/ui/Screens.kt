@@ -20,11 +20,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.medsel.mobilescope.data.Collectors
 import com.medsel.mobilescope.data.Fmt
 import com.medsel.mobilescope.data.TopContact
@@ -40,7 +42,13 @@ private fun day(t: Long) = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).f
 
 // =============== ACCUEIL ===============
 @Composable
-fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
+fun HomeScreen(
+    user: User,
+    onOpen: (Cat) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenDevice: () -> Unit,
+    onSignOut: () -> Unit
+) {
     val ctx = LocalContext.current
     val deviceState by loadState(0) { Collectors.device(ctx) }
 
@@ -51,16 +59,15 @@ fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
             .verticalScroll(rememberScrollState())
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("MobileScope", fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    if (user.guest) "Mode invité" else "Bonjour, ${user.name}",
-                    fontSize = 13.sp,
-                    color = muted
-                )
+                Text("MobileScope", fontSize = 27.sp, fontWeight = FontWeight.Bold)
+                Text("Tableau de bord intelligent", fontSize = 12.sp, color = muted)
+            }
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Rounded.Tune, "Préférences", tint = muted)
             }
             IconButton(onClick = onSignOut) {
                 Icon(Icons.Rounded.Logout, "Se déconnecter", tint = muted)
@@ -68,47 +75,174 @@ fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
         }
 
         Column(
-            Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            SectionTitle("Votre appareil")
-            Loaded(deviceState) { device ->
-                Panel {
-                    Text(device.model, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(5.dp))
-                    Text(device.android, fontSize = 13.sp, color = muted)
-                    Spacer(Modifier.height(12.dp))
-                    Legend(MaterialTheme.colorScheme.primary, "Correctif de sécurité", device.patch)
-                    Legend(MaterialTheme.colorScheme.primary, "Processeurs", "${device.cores} cœurs")
-                    Legend(MaterialTheme.colorScheme.primary, "Écran", device.screen)
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!user.photo.isNullOrBlank()) {
+                        AsyncImage(
+                            model = user.photo,
+                            contentDescription = "Photo de profil Google",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(66.dp).clip(CircleShape)
+                        )
+                    } else {
+                        Box(
+                            Modifier.size(66.dp).clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = .14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.AccountCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (user.guest) "Mode invité" else "Bonjour,", fontSize = 12.sp, color = muted)
+                        Text(user.name.ifBlank { "Utilisateur MobileScope" }, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (!user.guest && user.email.isNotBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(user.email, fontSize = 12.sp, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(onClick = onOpenDevice, label = { Text("Mon appareil") }, leadingIcon = {
+                        Icon(Icons.Rounded.Smartphone, null, modifier = Modifier.size(17.dp))
+                    })
+                    AssistChip(onClick = onOpenSettings, label = { Text("Personnaliser") }, leadingIcon = {
+                        Icon(Icons.Rounded.Tune, null, modifier = Modifier.size(17.dp))
+                    })
                 }
             }
 
-            SectionTitle("Diagnostic du téléphone")
-            Cat.values().forEach { cat ->
-                Row(
-                    Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
-                        .clickable { onOpen(cat) }
-                        .padding(15.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
-                            .background(cat.color.copy(alpha = .15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(cat.icon, null, tint = cat.color, modifier = Modifier.size(25.dp))
+            SectionTitle("APERÇU DE L'APPAREIL")
+            Loaded(deviceState) { device ->
+                Panel {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(48.dp).clip(RoundedCornerShape(15.dp))
+                                .background(Color(0xFF14B8D4).copy(alpha = .15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.PhoneAndroid, null, tint = Color(0xFF14B8D4), modifier = Modifier.size(27.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(device.model, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text(device.android, fontSize = 12.sp, color = muted)
+                        }
+                        IconButton(onClick = onOpenDevice) {
+                            Icon(Icons.Rounded.ChevronRight, "Détails de l'appareil", tint = muted)
+                        }
                     }
-                    Spacer(Modifier.width(13.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Legend(MaterialTheme.colorScheme.primary, "Processeur", "${device.cores} cœurs")
+                    Legend(MaterialTheme.colorScheme.primary, "Écran", device.screen)
+                    Legend(MaterialTheme.colorScheme.primary, "Correctif de sécurité", device.patch)
+                    TextButton(onClick = onOpenDevice, modifier = Modifier.align(Alignment.End)) {
+                        Text("Tous les détails")
+                        Icon(Icons.Rounded.ArrowForward, null, modifier = Modifier.padding(start = 6.dp).size(16.dp))
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Centre de diagnostic", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Ouvrez une carte pour explorer ses données.", fontSize = 12.sp, color = muted)
+                }
+                Text("${Cat.values().size} modules", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+            }
+
+            Cat.values().toList().chunked(2).forEach { rowCats ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    rowCats.forEach { cat ->
+                        var menuExpanded by remember(cat) { mutableStateOf(false) }
+                        var infoOpen by remember(cat) { mutableStateOf(false) }
+                        Column(
+                            Modifier.weight(1f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                                .clickable { onOpen(cat) }
+                                .padding(14.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Box(
+                                    Modifier.size(43.dp).clip(RoundedCornerShape(14.dp))
+                                        .background(cat.color.copy(alpha = .15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(cat.icon, null, tint = cat.color, modifier = Modifier.size(24.dp))
+                                }
+                                Spacer(Modifier.weight(1f))
+                                Box {
+                                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(30.dp)) {
+                                        Icon(Icons.Rounded.MoreVert, "Options de ${cat.title}", tint = muted, modifier = Modifier.size(19.dp))
+                                    }
+                                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text("Ouvrir le module") },
+                                            leadingIcon = { Icon(Icons.Rounded.OpenInNew, null) },
+                                            onClick = { menuExpanded = false; onOpen(cat) }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("À propos de cette carte") },
+                                            leadingIcon = { Icon(Icons.Rounded.Info, null) },
+                                            onClick = { menuExpanded = false; infoOpen = true }
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Text(cat.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(4.dp))
+                            Text(cat.sub, fontSize = 11.sp, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Explorer", fontSize = 12.sp, color = cat.color, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.width(4.dp))
+                                Icon(Icons.Rounded.ArrowForward, null, tint = cat.color, modifier = Modifier.size(15.dp))
+                            }
+                        }
+                        if (infoOpen) {
+                            AlertDialog(
+                                onDismissRequest = { infoOpen = false },
+                                icon = { Icon(cat.icon, null, tint = cat.color) },
+                                title = { Text(cat.title) },
+                                text = {
+                                    Text(
+                                        when (cat) {
+                                            Cat.Ram -> "Suivez l'occupation de la mémoire en direct, la mémoire disponible, le cache et le swap avec un graphique d'évolution."
+                                            Cat.Battery -> "Consultez le niveau, la température, la tension, l'état de santé, le courant et les données de charge disponibles."
+                                            Cat.Network -> "Analysez la connexion, les transferts Wi-Fi et mobiles, les périodes et les applications consommatrices."
+                                            Cat.Storage -> "Explorez l'espace utilisé, l'espace libre et les applications qui occupent le plus de stockage."
+                                            Cat.Contacts -> "Comptez les contacts, repérez les doublons et consultez les favoris. L'accès au carnet est demandé uniquement si nécessaire."
+                                            Cat.Calls -> "Analysez les appels sur 30 jours, les durées, les appels manqués et les correspondants les plus fréquents."
+                                            Cat.Sms -> "Consultez les volumes de SMS envoyés et reçus et leur évolution. Le contenu des messages n'est pas affiché."
+                                            Cat.Apps -> "Examinez les applications installées, les usages disponibles et les installations récentes."
+                                        }
+                                    )
+                                },
+                                confirmButton = { TextButton(onClick = { infoOpen = false; onOpen(cat) }) { Text("Explorer") } },
+                                dismissButton = { TextButton(onClick = { infoOpen = false }) { Text("Fermer") } }
+                            )
+                        }
+                    }
+                    if (rowCats.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Insights, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(cat.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(2.dp))
-                        Text(cat.sub, fontSize = 12.sp, color = muted)
+                        Text("Données et graphiques", fontWeight = FontWeight.SemiBold)
+                        Text("Chaque module propose ses indicateurs, ses détails et ses visualisations lorsque les données sont disponibles.", fontSize = 12.sp, color = muted)
                     }
-                    Icon(Icons.Rounded.ChevronRight, null, tint = muted)
                 }
             }
         }
