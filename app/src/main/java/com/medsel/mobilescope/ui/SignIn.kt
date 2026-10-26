@@ -48,7 +48,7 @@ fun SignInScreen(onSignedIn: (User) -> Unit) {
     }
 
     fun signIn() {
-        if (BuildConfig.WEB_CLIENT_ID == "REPLACE_ME") {
+        if (BuildConfig.WEB_CLIENT_ID.isBlank() || BuildConfig.WEB_CLIENT_ID == "REPLACE_ME") {
             error = "ID client Google non configuré. Ajoutez le secret WEB_CLIENT_ID, ou continuez en mode invité."
             return
         }
