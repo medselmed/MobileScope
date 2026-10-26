@@ -355,6 +355,7 @@ object Collectors {
         var inSec = 0L; var outSec = 0L; var longest = 0L
         val perDay = IntArray(7)
         val per = HashMap<String, Acc>()
+        val resolvedNames = HashMap<String, String>()
         ctx.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls.DURATION, CallLog.Calls.CACHED_NAME),
@@ -374,7 +375,7 @@ object Collectors {
                 val d = daysAgo(date, m0)
                 if (d < 7) perDay[6 - d]++
                 if (num.isNotBlank()) {
-                    val displayName = name?.takeIf { it.isNotBlank() } ?: lookupContactName(ctx, num) ?: num
+                    val displayName = name?.takeIf { it.isNotBlank() } ?: resolvedNames.getOrPut(num) { lookupContactName(ctx, num) ?: num }
                     val e = per.getOrPut(num) { Acc(displayName) }
                     e.count++; e.sec += dur
                 }
@@ -390,6 +391,7 @@ object Collectors {
         var rec = 0; var sent = 0; var cr = 0L; var cs = 0L
         val rd = IntArray(7); val sd = IntArray(7)
         val per = HashMap<String, Acc>()
+        val resolvedNames = HashMap<String, String>()
         ctx.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.TYPE, Telephony.Sms.DATE, Telephony.Sms.BODY),
@@ -406,7 +408,7 @@ object Collectors {
                     else -> continue
                 }
                 if (addr.isNotBlank()) {
-                    val displayName = lookupContactName(ctx, addr) ?: addr
+                    val displayName = resolvedNames.getOrPut(addr) { lookupContactName(ctx, addr) ?: addr }
                     per.getOrPut(addr) { Acc(displayName) }.count++
                 }
             }
