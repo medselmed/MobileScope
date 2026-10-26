@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.medsel.mobilescope.data.CallEntry
 import com.medsel.mobilescope.data.Collectors
 import com.medsel.mobilescope.data.Fmt
 import com.medsel.mobilescope.data.Prefs
@@ -40,8 +41,100 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Calendar
+import java.util.TimeZone
 
 private fun day(t: Long) = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(t))
+
+
+private fun localDateToPickerMillis(timestamp: Long): Long {
+    val local = Calendar.getInstance().apply { timeInMillis = timestamp }
+    return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(local.get(Calendar.YEAR), local.get(Calendar.MONTH), local.get(Calendar.DAY_OF_MONTH), 12, 0, 0)
+    }.timeInMillis
+}
+
+private fun pickerMillisToLocalDay(timestamp: Long): Long {
+    val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = timestamp }
+    return Calendar.getInstance().apply {
+        clear()
+        set(utc.get(Calendar.YEAR), utc.get(Calendar.MONTH), utc.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+    }.timeInMillis
+}
+
+@Composable
+private fun DateRangeSelector(
+    startMs: Long,
+    endMs: Long,
+    color: Color,
+    onStartChange: (Long) -> Unit,
+    onEndChange: (Long) -> Unit
+) {
+    var showStart by remember { mutableStateOf(false) }
+    var showEnd by remember { mutableStateOf(false) }
+    Panel {
+        Text("Période personnalisée", fontWeight = FontWeight.SemiBold)
+        Text("Choisissez les dates à analyser.", fontSize = 12.sp, color = muted)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { showStart = true }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Rounded.CalendarMonth, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Column {
+                    Text("Début", fontSize = 10.sp, color = muted)
+                    Text(day(startMs), fontSize = 12.sp, color = color)
+                }
+            }
+            OutlinedButton(onClick = { showEnd = true }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Rounded.Event, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Column {
+                    Text("Fin", fontSize = 10.sp, color = muted)
+                    Text(day(endMs), fontSize = 12.sp, color = color)
+                }
+            }
+        }
+        TextButton(onClick = {
+            onStartChange(Collectors.midnight(6))
+            onEndChange(System.currentTimeMillis())
+        }, modifier = Modifier.align(Alignment.End)) { Text("7 derniers jours") }
+    }
+    if (showStart) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = localDateToPickerMillis(startMs))
+        DatePickerDialog(
+            onDismissRequest = { showStart = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { selected ->
+                        val date = pickerMillisToLocalDay(selected)
+                        onStartChange(date)
+                        if (date > endMs) onEndChange(date)
+                    }
+                    showStart = false
+                }) { Text("Valider") }
+            },
+            dismissButton = { TextButton(onClick = { showStart = false }) { Text("Annuler") } }
+        ) { DatePicker(state = state, title = { Text("Date de début") }, showModeToggle = true) }
+    }
+    if (showEnd) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = localDateToPickerMillis(endMs))
+        DatePickerDialog(
+            onDismissRequest = { showEnd = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { selected ->
+                        val date = pickerMillisToLocalDay(selected)
+                        onEndChange(date)
+                        if (date < startMs) onStartChange(date)
+                    }
+                    showEnd = false
+                }) { Text("Valider") }
+            },
+            dismissButton = { TextButton(onClick = { showEnd = false }) { Text("Annuler") } }
+        ) { DatePicker(state = state, title = { Text("Date de fin") }, showModeToggle = true) }
+    }
+}
 
 // =============== ACCUEIL ===============
 @Composable
@@ -479,30 +572,65 @@ fun CallsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cat = Cat.Calls
     var tick by remember { mutableIntStateOf(0) }
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var selectedCallList by remember { mutableStateOf<String?>(null) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_CALL_LOG),
-            "MobileScope lit le journal d'appels des 30 derniers jours pour calculer vos durées et vos contacts les plus appelés.") {
-            val st by loadState(tick) { Collectors.calls(ctx) }
+            "MobileScope lit le journal d'appels uniquement pendant la période sélectionnée.") {
+            DateRangeSelector(startDate, endDate, cat.color,
+                onStartChange = { startDate = it; tick++ },
+                onEndChange = { endDate = it; tick++ })
+            val st by loadState(tick) { Collectors.calls(ctx, startDate, endDate) }
             Loaded(st) { r ->
                 val answered = r.incoming + r.outgoing
                 val frac = if (r.total > 0) answered.toFloat() / r.total else 0f
                 val talk = r.inSec + r.outSec
                 Hero(cat.color, frac, "${Fmt.duration(talk)} de conversation",
-                    if (answered > 0) "Durée moyenne ${Fmt.duration(talk / answered)} par appel abouti." else "Aucun appel abouti sur 30 jours.") {
-                    BigValue("${r.total}", "appels · 30 j")
+                    if (answered > 0) "Durée moyenne ${Fmt.duration(talk / answered)} par appel abouti." else "Aucun appel abouti pendant cette période.") {
+                    BigValue("${r.total}", "appels")
                 }
                 TilesGrid(listOf(
                     Tile("Entrants", "${r.incoming}", Icons.Rounded.CallReceived),
                     Tile("Sortants", "${r.outgoing}", Icons.Rounded.CallMade),
-                    Tile("Manqués", "${r.missed}", Icons.Rounded.CallMissed),
-                    Tile("Rejetés", "${r.rejected}", Icons.Rounded.Block),
                     Tile("Temps en réception", Fmt.duration(r.inSec), Icons.Rounded.Schedule),
                     Tile("Plus long appel", Fmt.duration(r.longest), Icons.Rounded.Timer)
                 ), cat.color)
-                SectionTitle("Appels sur 7 jours")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Panel(Modifier.weight(1f).clickable { selectedCallList = if (selectedCallList == "missed") null else "missed" }) {
+                        Icon(Icons.Rounded.CallMissed, null, tint = cat.color)
+                        Text("${r.missed}", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("Appels manqués", fontSize = 12.sp)
+                        Text("Toucher pour afficher", fontSize = 10.sp, color = muted)
+                    }
+                    Panel(Modifier.weight(1f).clickable { selectedCallList = if (selectedCallList == "rejected") null else "rejected" }) {
+                        Icon(Icons.Rounded.Block, null, tint = cat.color)
+                        Text("${r.rejected}", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("Appels refusés", fontSize = 12.sp)
+                        Text("Toucher pour afficher", fontSize = 10.sp, color = muted)
+                    }
+                }
+                val entries = when (selectedCallList) {
+                    "missed" -> r.missedCalls
+                    "rejected" -> r.rejectedCalls
+                    else -> emptyList()
+                }
+                if (selectedCallList != null) {
+                    SectionTitle(if (selectedCallList == "missed") "Liste des appels manqués" else "Liste des appels refusés")
+                    if (entries.isEmpty()) {
+                        Panel { Text("Aucun appel dans cette catégorie pour la période choisie.", color = muted) }
+                    } else Panel {
+                        entries.forEachIndexed { index, entry ->
+                            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .3f))
+                            CallEntryRow(entry, cat.color)
+                        }
+                        if (entries.size == 300) Text("Affichage limité aux 300 entrées les plus récentes.", fontSize = 11.sp, color = muted)
+                    }
+                }
+                SectionTitle("Volume d'appels par jour")
                 Panel {
-                    val labels = Collectors.dayLabels(7)
-                    BarChart(r.perDay.mapIndexed { i, v -> Bar(labels[i], listOf(v.toFloat())) }, listOf(cat.color))
+                    BarChart(r.perDay.mapIndexed { i, v -> Bar(r.dayLabels.getOrElse(i) { "J${i + 1}" }, listOf(v.toFloat())) }, listOf(cat.color))
+                    Text("Période : ${r.dayLabels.firstOrNull() ?: "—"} – ${r.dayLabels.lastOrNull() ?: "—"} · ${r.total} appels.", fontSize = 11.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Contacts les plus fréquents")
@@ -513,6 +641,25 @@ fun CallsScreen(onBack: () -> Unit) {
     }
 }
 
+@Composable
+private fun CallEntryRow(entry: CallEntry, color: Color) {
+    val ctx = LocalContext.current
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(entry.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(entry.number.ifBlank { "Numéro masqué" }, fontSize = 12.sp, color = muted)
+            Text("${SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(entry.date))} · ${Fmt.duration(entry.durationSec)}",
+                fontSize = 11.sp, color = muted)
+        }
+        if (entry.number.isNotBlank()) QuickActions(entry.number, color)
+        IconButton(onClick = {
+            runCatching {
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("content://call_log/calls")))
+            }
+        }) { Icon(Icons.Rounded.History, "Ouvrir le journal d'appels", tint = color) }
+    }
+}
+
 // =============== SMS ===============
 @Composable
 fun SmsScreen(onBack: () -> Unit) {
@@ -520,16 +667,22 @@ fun SmsScreen(onBack: () -> Unit) {
     val cat = Cat.Sms
     var tick by remember { mutableIntStateOf(0) }
     var smsView by remember { mutableIntStateOf(0) }
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_SMS),
-            "MobileScope compte vos SMS reçus et envoyés sur 30 jours. Le contenu des messages n'est jamais affiché ni transmis, seule leur longueur est mesurée.") {
-            val st by loadState(tick) { Collectors.sms(ctx) }
+            "MobileScope compte les SMS reçus et envoyés pendant la période sélectionnée. Le contenu n'est jamais affiché ni transmis.") {
+            DateRangeSelector(startDate, endDate, cat.color,
+                onStartChange = { startDate = it; tick++ },
+                onEndChange = { endDate = it; tick++ })
+            val st by loadState(tick) { Collectors.sms(ctx, startDate, endDate) }
             Loaded(st) { r ->
                 val total = r.received + r.sent
                 val frac = if (total > 0) r.sent.toFloat() / total else 0f
+                val periodDays = r.dayLabels.size.coerceAtLeast(1)
                 Hero(cat.color, frac, "${r.sent} envoyés, ${r.received} reçus",
-                    "Moyenne de ${"%.1f".format(Locale.getDefault(), total / 30f)} messages par jour.") {
-                    BigValue("$total", "SMS · 30 j")
+                    "Moyenne de ${"%.1f".format(Locale.getDefault(), total / periodDays.toFloat())} messages par jour.") {
+                    BigValue("$total", "SMS")
                 }
                 TilesGrid(listOf(
                     Tile("Reçus", "${r.received}", Icons.Rounded.Download),
@@ -537,32 +690,38 @@ fun SmsScreen(onBack: () -> Unit) {
                     Tile("Caractères reçus", "${r.charsReceived}"),
                     Tile("Caractères envoyés", "${r.charsSent}")
                 ), cat.color)
-                SectionTitle("Activité sur 7 jours")
+                SectionTitle("Activité quotidienne")
                 Segmented(listOf("Reçus + envoyés", "Reçus", "Envoyés"), smsView, cat.color) { smsView = it }
                 Panel {
-                    val labels = Collectors.dayLabels(7)
                     val bars = r.recvPerDay.indices.map { i ->
-                        val parts = when (smsView) {
+                        val values = when (smsView) {
                             1 -> listOf(r.recvPerDay[i].toFloat())
                             2 -> listOf(r.sentPerDay[i].toFloat())
                             else -> listOf(r.recvPerDay[i].toFloat(), r.sentPerDay[i].toFloat())
                         }
-                        Bar(labels[i], parts)
+                        Bar(r.dayLabels.getOrElse(i) { "J${i + 1}" }, values)
                     }
                     val colors = when (smsView) {
                         1 -> listOf(cat.color)
                         2 -> listOf(cat.color.copy(alpha = .48f))
                         else -> listOf(cat.color, cat.color.copy(alpha = .48f))
                     }
-                    BarChart(bars, colors)
+                    if (total == 0) {
+                        Icon(Icons.Rounded.BarChart, null, tint = muted, modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Text("Aucun SMS trouvé sur cette période.", fontWeight = FontWeight.SemiBold)
+                        Text("Essayez une période plus large ou vérifiez l'autorisation SMS.", fontSize = 12.sp, color = muted)
+                    } else {
+                        BarChart(bars, colors)
+                    }
                     Spacer(Modifier.height(12.dp))
                     if (smsView != 2) Legend(cat.color, "Reçus", "${r.recvPerDay.sum()}")
                     if (smsView != 1) Legend(cat.color.copy(alpha = .48f), "Envoyés", "${r.sentPerDay.sum()}")
-                    Text("Chaque barre représente le nombre de SMS par jour. Période : 7 derniers jours.", fontSize = 11.sp, color = muted)
+                    Text("Du ${r.dayLabels.firstOrNull() ?: "—"} au ${r.dayLabels.lastOrNull() ?: "—"} · ${r.dayLabels.size} jours.", fontSize = 11.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Correspondants les plus actifs")
-                    TopList(r.top, cat.color) { it.number }
+                    TopList(r.top, cat.color) { "${it.count} SMS · ${it.number}" }
                 }
             }
         }
