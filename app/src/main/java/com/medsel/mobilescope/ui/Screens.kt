@@ -852,9 +852,10 @@ fun NetworkScreen(onBack: () -> Unit) {
     val cat = Cat.Network
     var tick by remember { mutableIntStateOf(0) }
     val resume = rememberResumeTick()
-    var sel by remember { mutableIntStateOf(1) }
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DetailScaffold(cat, onBack, { tick++ }) {
-        val st by loadState(tick + resume * 1000) { Collectors.network(ctx) }
+        val st by loadState(tick + resume * 1000) { Collectors.network(ctx, startDate, endDate) }
         Loaded(st) { r ->
             val quality = when {
                 !r.online -> 0f
@@ -869,7 +870,10 @@ fun NetworkScreen(onBack: () -> Unit) {
             Hero(cat.color, quality, r.type, extra) {
                 Icon(Icons.Rounded.Wifi, null, tint = cat.color, modifier = Modifier.size(40.dp))
             }
-            SectionTitle("Depuis le dernier démarrage")
+            DateRangeSelector(startDate, endDate, cat.color,
+                onStartChange = { startDate = it; tick++ },
+                onEndChange = { endDate = it; tick++ })
+            SectionTitle("Depuis le dernier démarrage (cumulé)")
             TilesGrid(listOf(
                 Tile("Reçu (total)", Fmt.bytes(r.boot.rx), Icons.Rounded.Download),
                 Tile("Envoyé (total)", Fmt.bytes(r.boot.tx), Icons.Rounded.CallMade),
@@ -879,8 +883,7 @@ fun NetworkScreen(onBack: () -> Unit) {
             if (!r.hasAccess || r.periods.isEmpty()) {
                 UsageAccessBanner(cat, resume, "Autorisez MobileScope dans « Accès aux données d'utilisation » pour voir la consommation par jour, par période et par application.")
             } else {
-                val p = r.periods[sel.coerceIn(0, r.periods.lastIndex)]
-                Segmented(r.periods.map { it.label }, sel, cat.color) { sel = it }
+                val p = r.periods.first()
                 Panel {
                     val tw = p.wifi.total.toFloat(); val tm = p.mobile.total.toFloat()
                     Text(Fmt.bytes(p.wifi.total + p.mobile.total), fontSize = 30.sp, fontWeight = FontWeight.Bold)
@@ -897,7 +900,7 @@ fun NetworkScreen(onBack: () -> Unit) {
                     Tile("Mobile reçu", Fmt.bytes(p.mobile.rx), Icons.Rounded.Download),
                     Tile("Mobile envoyé", Fmt.bytes(p.mobile.tx), Icons.Rounded.CallMade)
                 ), cat.color)
-                SectionTitle("7 derniers jours")
+                SectionTitle("Trafic quotidien · période sélectionnée")
                 Panel {
                     BarChart(r.days.map { Bar(it.label, listOf(it.wifi.toFloat(), it.mobile.toFloat())) }, listOf(cat.color, Color(0xFFFF8A3D)))
                 }
@@ -1069,8 +1072,10 @@ fun AppsScreen(onBack: () -> Unit) {
     val cat = Cat.Apps
     var tick by remember { mutableIntStateOf(0) }
     val resume = rememberResumeTick()
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DetailScaffold(cat, onBack, { tick++ }) {
-        val st by loadState(tick + resume * 1000) { Collectors.apps(ctx) }
+        val st by loadState(tick + resume * 1000) { Collectors.apps(ctx, startDate, endDate) }
         Loaded(st) { r ->
             val frac = if (r.total > 0) r.user.toFloat() / r.total else 0f
             Hero(cat.color, frac, "${r.user} applications installées par vous", "${r.system} applications système.") {
@@ -1079,9 +1084,12 @@ fun AppsScreen(onBack: () -> Unit) {
             if (!r.hasAccess) {
                 UsageAccessBanner(cat, resume, "Autorisez MobileScope dans « Accès aux données d'utilisation » pour mesurer le temps passé sur chaque application.")
             } else {
+                DateRangeSelector(startDate, endDate, cat.color,
+                    onStartChange = { startDate = it; tick++ },
+                    onEndChange = { endDate = it; tick++ })
                 Panel {
                     Text(Fmt.duration(r.screenMs / 1000), fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                    Text("de temps d'utilisation sur 7 jours", fontSize = 12.sp, color = muted)
+                    Text("de temps d'utilisation sur la période sélectionnée", fontSize = 12.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Les plus utilisées")
