@@ -1,5 +1,6 @@
 name: Build & publier l'APK
 
+# Le wrapper Gradle et ses propriétés se trouvent dans gradle/wrapper/.
 on:
   push:
     branches: [main]
