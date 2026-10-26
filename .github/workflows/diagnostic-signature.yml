@@ -1,0 +1,29 @@
+name: Diagnostic SHA-1 de signature
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fingerprint:
+    name: Lire l'empreinte du certificat Android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code de la branche à diagnostiquer
+        uses: actions/checkout@v4
+        with:
+          ref: fix/android-project-structure
+
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Autoriser le wrapper Gradle
+        run: chmod +x ./gradlew
+
+      - name: Afficher le rapport de signature
+        run: ./gradlew --no-daemon :app:signingReport
