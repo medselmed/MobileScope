@@ -34,9 +34,6 @@ jobs:
       - name: Autoriser le wrapper Gradle
         run: chmod +x ./gradlew
 
-      - name: Vérifier l'empreinte SHA-1 du certificat (diagnostic)
-        run: ./gradlew --no-daemon :app:signingReport
-
       - name: Compiler l'APK release
         env:
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
