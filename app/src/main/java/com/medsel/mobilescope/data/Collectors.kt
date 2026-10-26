@@ -12,6 +12,7 @@ import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.net.wifi.WifiManager
@@ -286,8 +287,10 @@ object Collectors {
     // ---------- contacts ----------
     fun contacts(ctx: Context): ContactsReport {
         val cr = ctx.contentResolver
-        var total = 0; var withPhone = 0; var starred = 0
-        val fav = ArrayList<Pair<Long, String>>()
+        var total = 0
+        var withPhone = 0
+        var starred = 0
+        val rows = ArrayList<Triple<Long, String, Boolean>>()
         cr.query(
             ContactsContract.Contacts.CONTENT_URI,
             arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME,
@@ -296,31 +299,53 @@ object Collectors {
         )?.use { c ->
             while (c.moveToNext()) {
                 total++
+                val id = c.getLong(0)
+                val name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Contact sans nom"
+                val isStarred = c.getInt(2) == 1
                 if (c.getInt(3) > 0) withPhone++
-                if (c.getInt(2) == 1) { starred++; fav.add(c.getLong(0) to (c.getString(1) ?: "—")) }
+                if (isStarred) starred++
+                rows.add(Triple(id, name, isStarred))
             }
         }
         val emails = HashSet<Long>()
-        cr.query(ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+        cr.query(
+            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Email.CONTACT_ID), null, null, null
         )?.use { c -> while (c.moveToNext()) emails.add(c.getLong(0)) }
+
         val byNumber = HashMap<String, HashSet<Long>>()
         val firstNumber = HashMap<Long, String>()
-        cr.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+        cr.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID, ContactsContract.CommonDataKinds.Phone.NUMBER),
             null, null, null
         )?.use { c ->
             while (c.moveToNext()) {
                 val id = c.getLong(0)
-                val n = c.getString(1) ?: continue
-                if (!firstNumber.containsKey(id)) firstNumber[id] = n
-                val key = n.filter { it.isDigit() }.takeLast(9)
+                val number = c.getString(1) ?: continue
+                if (!firstNumber.containsKey(id)) firstNumber[id] = number
+                val key = number.filter { it.isDigit() }.takeLast(9)
                 if (key.length >= 6) byNumber.getOrPut(key) { HashSet() }.add(id)
             }
         }
-        val favorites = fav.take(15).map { ContactItem(it.first, it.second, firstNumber[it.first]) }
-        return ContactsReport(total, withPhone, emails.size, starred, byNumber.count { it.value.size > 1 }, favorites)
+        val duplicateIds = byNumber.values.filter { it.size > 1 }.flatten().toSet()
+        val contacts = rows.map { (id, name, isStarred) ->
+            ContactItem(id, name, firstNumber[id], id in emails, isStarred, id in duplicateIds)
+        }
+        return ContactsReport(
+            total, withPhone, emails.size, starred, byNumber.count { it.value.size > 1 },
+            contacts.filter { it.starred }.take(15), contacts
+        )
     }
+
+    private fun lookupContactName(ctx: Context, number: String): String? = runCatching {
+        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+        ctx.contentResolver.query(
+            uri,
+            arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+            null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null }
+    }.getOrNull()
 
     // ---------- appels ----------
     fun calls(ctx: Context): CallsReport {
@@ -349,7 +374,8 @@ object Collectors {
                 val d = daysAgo(date, m0)
                 if (d < 7) perDay[6 - d]++
                 if (num.isNotBlank()) {
-                    val e = per.getOrPut(num) { Acc(name?.takeIf { it.isNotBlank() } ?: num) }
+                    val displayName = name?.takeIf { it.isNotBlank() } ?: lookupContactName(ctx, num) ?: num
+                    val e = per.getOrPut(num) { Acc(displayName) }
                     e.count++; e.sec += dur
                 }
             }
@@ -379,7 +405,10 @@ object Collectors {
                     Telephony.Sms.MESSAGE_TYPE_SENT -> { sent++; cs += len; if (d < 7) sd[6 - d]++ }
                     else -> continue
                 }
-                if (addr.isNotBlank()) per.getOrPut(addr) { Acc(addr) }.count++
+                if (addr.isNotBlank()) {
+                    val displayName = lookupContactName(ctx, addr) ?: addr
+                    per.getOrPut(addr) { Acc(displayName) }.count++
+                }
             }
         }
         return SmsReport(rec, sent, cr, cs, rd.toList(), sd.toList(), top(per))
