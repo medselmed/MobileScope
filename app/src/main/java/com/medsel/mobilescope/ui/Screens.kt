@@ -52,6 +52,13 @@ fun HomeScreen(
 ) {
     val ctx = LocalContext.current
     val compactCards = Prefs.compactCards(ctx)
+    var searchQuery by remember { mutableStateOf("") }
+    var favoritesOnly by remember { mutableStateOf(false) }
+    var favoriteModules by remember { mutableStateOf(Prefs.favoriteModules(ctx)) }
+    val visibleCats = Cat.values().toList().filter { cat ->
+        (searchQuery.isBlank() || cat.title.contains(searchQuery, ignoreCase = true) || cat.sub.contains(searchQuery, ignoreCase = true)) &&
+            (!favoritesOnly || cat.name in favoriteModules)
+    }
     val deviceState by loadState(0) { Collectors.device(ctx) }
 
     Column(
@@ -158,7 +165,48 @@ fun HomeScreen(
                 Text("${Cat.values().size} modules", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             }
 
-            Cat.values().toList().chunked(2).forEach { rowCats ->
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (searchQuery.isNotBlank()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Rounded.Close, "Effacer la recherche")
+                        }
+                    }
+                },
+                placeholder = { Text("Rechercher un module…") }
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(
+                    selected = !favoritesOnly,
+                    onClick = { favoritesOnly = false },
+                    label = { Text("Tous les modules") },
+                    leadingIcon = { Icon(Icons.Rounded.GridView, null, modifier = Modifier.size(17.dp)) }
+                )
+                FilterChip(
+                    selected = favoritesOnly,
+                    onClick = { favoritesOnly = true },
+                    label = { Text("Favoris (${favoriteModules.size})") },
+                    leadingIcon = { Icon(Icons.Rounded.Star, null, modifier = Modifier.size(17.dp)) }
+                )
+            }
+            if (visibleCats.isEmpty()) {
+                Panel {
+                    Icon(Icons.Rounded.SearchOff, null, tint = muted, modifier = Modifier.size(30.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text(if (favoritesOnly) "Aucun module favori" else "Aucun module trouvé", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (favoritesOnly) "Ajoutez des cartes aux favoris depuis leur menu ⋮." else "Essayez un autre terme de recherche.",
+                        color = muted, fontSize = 12.sp
+                    )
+                }
+            }
+            visibleCats.chunked(2).forEach { rowCats ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     rowCats.forEach { cat ->
                         var menuExpanded by remember(cat) { mutableStateOf(false) }
@@ -185,6 +233,15 @@ fun HomeScreen(
                                         Icon(Icons.Rounded.MoreVert, "Options de ${cat.title}", tint = muted, modifier = Modifier.size(19.dp))
                                     }
                                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (cat.name in favoriteModules) "Retirer des favoris" else "Ajouter aux favoris") },
+                                            leadingIcon = { Icon(if (cat.name in favoriteModules) Icons.Rounded.Star else Icons.Rounded.StarBorder, null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                Prefs.toggleFavoriteModule(ctx, cat.name)
+                                                favoriteModules = Prefs.favoriteModules(ctx)
+                                            }
+                                        )
                                         DropdownMenuItem(
                                             text = { Text("Ouvrir le module") },
                                             leadingIcon = { Icon(Icons.Rounded.OpenInNew, null) },
