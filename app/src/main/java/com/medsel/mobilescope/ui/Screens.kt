@@ -2,11 +2,17 @@ package com.medsel.mobilescope.ui
 
 import android.Manifest
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -22,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.medsel.mobilescope.data.Collectors
 import com.medsel.mobilescope.data.Fmt
 import com.medsel.mobilescope.data.TopContact
+import com.medsel.mobilescope.data.User
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -30,6 +37,83 @@ import java.util.Date
 import java.util.Locale
 
 private fun day(t: Long) = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(t))
+
+// =============== ACCUEIL ===============
+@Composable
+fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
+    val ctx = LocalContext.current
+    val deviceState by loadState(0) { Collectors.device(ctx) }
+
+    Column(
+        Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("MobileScope", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    if (user.guest) "Mode invité" else "Bonjour, ${user.name}",
+                    fontSize = 13.sp,
+                    color = muted
+                )
+            }
+            IconButton(onClick = onSignOut) {
+                Icon(Icons.Rounded.Logout, "Se déconnecter", tint = muted)
+            }
+        }
+
+        Column(
+            Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            SectionTitle("Votre appareil")
+            Loaded(deviceState) { device ->
+                Panel {
+                    Text(device.model, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(5.dp))
+                    Text(device.android, fontSize = 13.sp, color = muted)
+                    Spacer(Modifier.height(12.dp))
+                    Legend(MaterialTheme.colorScheme.primary, "Correctif de sécurité", device.patch)
+                    Legend(MaterialTheme.colorScheme.primary, "Processeurs", "${device.cores} cœurs")
+                    Legend(MaterialTheme.colorScheme.primary, "Écran", device.screen)
+                }
+            }
+
+            SectionTitle("Diagnostic du téléphone")
+            Cat.values().forEach { cat ->
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
+                        .clickable { onOpen(cat) }
+                        .padding(15.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
+                            .background(cat.color.copy(alpha = .15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(cat.icon, null, tint = cat.color, modifier = Modifier.size(25.dp))
+                    }
+                    Spacer(Modifier.width(13.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(cat.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(cat.sub, fontSize = 12.sp, color = muted)
+                    }
+                    Icon(Icons.Rounded.ChevronRight, null, tint = muted)
+                }
+            }
+        }
+    }
+}
 
 // =============== CONTACTS ===============
 @Composable
