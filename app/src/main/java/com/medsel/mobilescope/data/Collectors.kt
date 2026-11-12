@@ -12,6 +12,7 @@ import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.net.wifi.WifiManager
@@ -50,6 +51,38 @@ object Collectors {
     fun dayLabels(n: Int): List<String> {
         val f = SimpleDateFormat("EEE", Locale.getDefault())
         return (n - 1 downTo 0).map { f.format(Date(midnight(it))).take(3) }
+    }
+
+    private fun normalizeDay(timestamp: Long): Long {
+        val c = Calendar.getInstance().apply {
+            timeInMillis = timestamp
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }
+        return c.timeInMillis
+    }
+
+    private fun nextDay(timestamp: Long): Long =
+        Calendar.getInstance().apply { timeInMillis = timestamp; add(Calendar.DAY_OF_YEAR, 1) }.timeInMillis
+
+    private fun rangeDays(startMs: Long, endMs: Long): List<Long> {
+        val start = normalizeDay(minOf(startMs, endMs))
+        val end = normalizeDay(maxOf(startMs, endMs))
+        val result = ArrayList<Long>()
+        var current = start
+        while (current <= end && result.size < 3661) {
+            result.add(current)
+            current = nextDay(current)
+        }
+        return result
+    }
+
+    private fun dayKey(timestamp: Long): String =
+        SimpleDateFormat("yyyyMMdd", Locale.ROOT).format(Date(normalizeDay(timestamp)))
+
+    fun labelsBetween(startMs: Long, endMs: Long): List<String> {
+        val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
+        return rangeDays(startMs, endMs).map { fmt.format(Date(it)) }
     }
 
     private fun daysAgo(t: Long, m0: Long): Int = if (t >= m0) 0 else (((m0 - t - 1) / DAY) + 1).toInt()
@@ -211,7 +244,7 @@ object Collectors {
         }.filter { it.total > 0 }.sortedByDescending { it.total }.take(10)
     }
 
-    fun network(ctx: Context): NetReport {
+    fun network(ctx: Context, startDateMs: Long = midnight(6), endDateMs: Long = System.currentTimeMillis()): NetReport {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val caps = cm.getNetworkCapabilities(cm.activeNetwork)
         val type = when {
@@ -238,19 +271,21 @@ object Collectors {
         if (access) {
             val nsm = ctx.getSystemService(Context.NETWORK_STATS_SERVICE) as NetworkStatsManager
             val now = System.currentTimeMillis()
-            periods = listOf("Aujourd'hui" to 0, "7 jours" to 6, "30 jours" to 29).map { (lbl, back) ->
-                val s = midnight(back)
-                Period(lbl,
-                    summary(nsm, ConnectivityManager.TYPE_WIFI, s, now),
-                    summary(nsm, ConnectivityManager.TYPE_MOBILE, s, now),
-                    topApps(ctx, nsm, s, now))
-            }
-            val labels = dayLabels(7)
-            days = (6 downTo 0).map { d ->
-                val s = midnight(d); val e = if (d == 0) now else midnight(d - 1)
-                DayTraffic(labels[6 - d],
-                    summary(nsm, ConnectivityManager.TYPE_WIFI, s, e).total,
-                    summary(nsm, ConnectivityManager.TYPE_MOBILE, s, e).total)
+            val selectedStart = normalizeDay(minOf(startDateMs, endDateMs))
+            val selectedEnd = normalizeDay(maxOf(startDateMs, endDateMs))
+            val selectedEndExclusive = nextDay(selectedEnd)
+            periods = listOf(Period(
+                "Période sélectionnée",
+                summary(nsm, ConnectivityManager.TYPE_WIFI, selectedStart, selectedEndExclusive),
+                summary(nsm, ConnectivityManager.TYPE_MOBILE, selectedStart, selectedEndExclusive),
+                topApps(ctx, nsm, selectedStart, selectedEndExclusive)
+            ))
+            val fmt = SimpleDateFormat("d MMM", Locale.getDefault())
+            days = rangeDays(selectedStart, selectedEnd).map { d ->
+                val e = nextDay(d).coerceAtMost(selectedEndExclusive)
+                DayTraffic(fmt.format(Date(d)),
+                    summary(nsm, ConnectivityManager.TYPE_WIFI, d, e).total,
+                    summary(nsm, ConnectivityManager.TYPE_MOBILE, d, e).total)
             }
         }
         return NetReport(type, caps != null, caps?.linkDownstreamBandwidthKbps ?: 0, caps?.linkUpstreamBandwidthKbps ?: 0,
@@ -258,7 +293,7 @@ object Collectors {
     }
 
     // ---------- applications ----------
-    fun apps(ctx: Context): AppsReport {
+    fun apps(ctx: Context, startDateMs: Long = midnight(6), endDateMs: Long = System.currentTimeMillis()): AppsReport {
         val pm = ctx.packageManager
         val all = pm.getInstalledApplications(0)
         val sys = all.count { (it.flags and ApplicationInfo.FLAG_SYSTEM) != 0 }
@@ -273,7 +308,9 @@ object Collectors {
         val top = ArrayList<AppUsage>()
         if (access) {
             val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-            val map = usm.queryAndAggregateUsageStats(midnight(6), System.currentTimeMillis())
+            val usageStart = normalizeDay(minOf(startDateMs, endDateMs))
+            val usageEnd = nextDay(normalizeDay(maxOf(startDateMs, endDateMs)))
+            val map = usm.queryAndAggregateUsageStats(usageStart, usageEnd)
             for ((pkg, st) in map) {
                 val fg = st.totalTimeInForeground
                 if (fg > 0) { screen += fg; top.add(AppUsage(pkg, label(pm, pkg), fg, st.lastTimeUsed)) }
@@ -286,8 +323,10 @@ object Collectors {
     // ---------- contacts ----------
     fun contacts(ctx: Context): ContactsReport {
         val cr = ctx.contentResolver
-        var total = 0; var withPhone = 0; var starred = 0
-        val fav = ArrayList<Pair<Long, String>>()
+        var total = 0
+        var withPhone = 0
+        var starred = 0
+        val rows = ArrayList<Triple<Long, String, Boolean>>()
         cr.query(
             ContactsContract.Contacts.CONTENT_URI,
             arrayOf(ContactsContract.Contacts._ID, ContactsContract.Contacts.DISPLAY_NAME,
@@ -296,92 +335,147 @@ object Collectors {
         )?.use { c ->
             while (c.moveToNext()) {
                 total++
+                val id = c.getLong(0)
+                val name = c.getString(1)?.takeIf { it.isNotBlank() } ?: "Contact sans nom"
+                val isStarred = c.getInt(2) == 1
                 if (c.getInt(3) > 0) withPhone++
-                if (c.getInt(2) == 1) { starred++; fav.add(c.getLong(0) to (c.getString(1) ?: "—")) }
+                if (isStarred) starred++
+                rows.add(Triple(id, name, isStarred))
             }
         }
         val emails = HashSet<Long>()
-        cr.query(ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+        cr.query(
+            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Email.CONTACT_ID), null, null, null
         )?.use { c -> while (c.moveToNext()) emails.add(c.getLong(0)) }
+
         val byNumber = HashMap<String, HashSet<Long>>()
         val firstNumber = HashMap<Long, String>()
-        cr.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+        cr.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID, ContactsContract.CommonDataKinds.Phone.NUMBER),
             null, null, null
         )?.use { c ->
             while (c.moveToNext()) {
                 val id = c.getLong(0)
-                val n = c.getString(1) ?: continue
-                if (!firstNumber.containsKey(id)) firstNumber[id] = n
-                val key = n.filter { it.isDigit() }.takeLast(9)
+                val number = c.getString(1) ?: continue
+                if (!firstNumber.containsKey(id)) firstNumber[id] = number
+                val key = number.filter { it.isDigit() }.takeLast(9)
                 if (key.length >= 6) byNumber.getOrPut(key) { HashSet() }.add(id)
             }
         }
-        val favorites = fav.take(15).map { ContactItem(it.first, it.second, firstNumber[it.first]) }
-        return ContactsReport(total, withPhone, emails.size, starred, byNumber.count { it.value.size > 1 }, favorites)
+        val duplicateIds = byNumber.values.filter { it.size > 1 }.flatten().toSet()
+        val contacts = rows.map { (id, name, isStarred) ->
+            ContactItem(id, name, firstNumber[id], id in emails, isStarred, id in duplicateIds)
+        }
+        return ContactsReport(
+            total, withPhone, emails.size, starred, byNumber.count { it.value.size > 1 },
+            contacts.filter { it.starred }.take(15), contacts
+        )
     }
 
+    private fun lookupContactName(ctx: Context, number: String): String? = runCatching {
+        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
+        ctx.contentResolver.query(
+            uri,
+            arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+            null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null }
+    }.getOrNull()
+
     // ---------- appels ----------
-    fun calls(ctx: Context): CallsReport {
-        val m0 = midnight(0)
-        val since = midnight(29)
+    fun calls(ctx: Context, startDateMs: Long = midnight(6), endDateMs: Long = System.currentTimeMillis()): CallsReport {
+        val days = rangeDays(startDateMs, endDateMs)
+        val start = days.first()
+        val endExclusive = nextDay(days.last())
+        val labels = days.map { SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(it)) }
+        val dayIndices = days.mapIndexed { index, value -> dayKey(value) to index }.toMap()
         var inc = 0; var out = 0; var miss = 0; var rej = 0
         var inSec = 0L; var outSec = 0L; var longest = 0L
-        val perDay = IntArray(7)
+        val perDay = IntArray(days.size)
         val per = HashMap<String, Acc>()
+        val resolvedNames = HashMap<String, String>()
+        val missedCalls = ArrayList<CallEntry>()
+        val rejectedCalls = ArrayList<CallEntry>()
         ctx.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
             arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls.DURATION, CallLog.Calls.CACHED_NAME),
-            CallLog.Calls.DATE + " >= ?", arrayOf(since.toString()), CallLog.Calls.DATE + " DESC"
+            CallLog.Calls.DATE + " >= ? AND " + CallLog.Calls.DATE + " < ?",
+            arrayOf(start.toString(), endExclusive.toString()),
+            CallLog.Calls.DATE + " DESC"
         )?.use { c ->
             while (c.moveToNext()) {
                 val num = c.getString(0) ?: ""
                 val type = c.getInt(1); val date = c.getLong(2); val dur = c.getLong(3)
-                val name = c.getString(4)
+                val cachedName = c.getString(4)
+                val displayName = if (num.isBlank()) "Numéro masqué" else
+                    cachedName?.takeIf { it.isNotBlank() } ?: resolvedNames.getOrPut(num) { lookupContactName(ctx, num) ?: num }
                 when (type) {
                     CallLog.Calls.INCOMING_TYPE -> { inc++; inSec += dur }
                     CallLog.Calls.OUTGOING_TYPE -> { out++; outSec += dur }
-                    CallLog.Calls.MISSED_TYPE -> miss++
-                    CallLog.Calls.REJECTED_TYPE -> rej++
+                    CallLog.Calls.MISSED_TYPE -> {
+                        miss++
+                        missedCalls.add(CallEntry(num, displayName, type, date, dur))
+                    }
+                    CallLog.Calls.REJECTED_TYPE -> {
+                        rej++
+                        rejectedCalls.add(CallEntry(num, displayName, type, date, dur))
+                    }
                 }
                 if (dur > longest) longest = dur
-                val d = daysAgo(date, m0)
-                if (d < 7) perDay[6 - d]++
+                dayIndices[dayKey(date)]?.let { perDay[it]++ }
                 if (num.isNotBlank()) {
-                    val e = per.getOrPut(num) { Acc(name?.takeIf { it.isNotBlank() } ?: num) }
+                    val e = per.getOrPut(num) { Acc(displayName) }
                     e.count++; e.sec += dur
                 }
             }
         }
-        return CallsReport(inc + out + miss + rej, inc, out, miss, rej, inSec, outSec, longest, perDay.toList(), top(per))
+        return CallsReport(
+            inc + out + miss + rej, inc, out, miss, rej, inSec, outSec, longest,
+            perDay.toList(), top(per), labels, missedCalls.take(300), rejectedCalls.take(300)
+        )
     }
 
     // ---------- SMS ----------
-    fun sms(ctx: Context): SmsReport {
-        val m0 = midnight(0)
-        val since = midnight(29)
+    fun sms(ctx: Context, startDateMs: Long = midnight(6), endDateMs: Long = System.currentTimeMillis()): SmsReport {
+        val days = rangeDays(startDateMs, endDateMs)
+        val start = days.first()
+        val endExclusive = nextDay(days.last())
+        val labels = days.map { SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(it)) }
+        val dayIndices = days.mapIndexed { index, value -> dayKey(value) to index }.toMap()
         var rec = 0; var sent = 0; var cr = 0L; var cs = 0L
-        val rd = IntArray(7); val sd = IntArray(7)
+        val rd = IntArray(days.size); val sd = IntArray(days.size)
         val per = HashMap<String, Acc>()
+        val resolvedNames = HashMap<String, String>()
         ctx.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.TYPE, Telephony.Sms.DATE, Telephony.Sms.BODY),
-            Telephony.Sms.DATE + " >= ?", arrayOf(since.toString()), Telephony.Sms.DATE + " DESC"
+            Telephony.Sms.DATE + " >= ? AND " + Telephony.Sms.DATE + " < ?",
+            arrayOf(start.toString(), endExclusive.toString()),
+            Telephony.Sms.DATE + " DESC"
         )?.use { c ->
             while (c.moveToNext()) {
                 val addr = c.getString(0) ?: ""
                 val type = c.getInt(1); val date = c.getLong(2)
                 val len = (c.getString(3) ?: "").length.toLong()
-                val d = daysAgo(date, m0)
+                val dayIndex = dayIndices[dayKey(date)]
                 when (type) {
-                    Telephony.Sms.MESSAGE_TYPE_INBOX -> { rec++; cr += len; if (d < 7) rd[6 - d]++ }
-                    Telephony.Sms.MESSAGE_TYPE_SENT -> { sent++; cs += len; if (d < 7) sd[6 - d]++ }
+                    Telephony.Sms.MESSAGE_TYPE_INBOX -> {
+                        rec++; cr += len
+                        if (dayIndex != null) rd[dayIndex]++
+                    }
+                    Telephony.Sms.MESSAGE_TYPE_SENT -> {
+                        sent++; cs += len
+                        if (dayIndex != null) sd[dayIndex]++
+                    }
                     else -> continue
                 }
-                if (addr.isNotBlank()) per.getOrPut(addr) { Acc(addr) }.count++
+                if (addr.isNotBlank()) {
+                    val displayName = resolvedNames.getOrPut(addr) { lookupContactName(ctx, addr) ?: addr }
+                    per.getOrPut(addr) { Acc(displayName) }.count++
+                }
             }
         }
-        return SmsReport(rec, sent, cr, cs, rd.toList(), sd.toList(), top(per))
+        return SmsReport(rec, sent, cr, cs, rd.toList(), sd.toList(), top(per), labels)
     }
 }

@@ -1,6 +1,20 @@
 package com.medsel.mobilescope.ui
 
 import android.Manifest
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.provider.ContactsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,25 +22,27 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.medsel.mobilescope.data.CallEntry
 import com.medsel.mobilescope.data.Collectors
 import com.medsel.mobilescope.data.Fmt
+import com.medsel.mobilescope.data.Prefs
 import com.medsel.mobilescope.data.TopContact
 import com.medsel.mobilescope.data.User
 import kotlinx.coroutines.Dispatchers
@@ -35,13 +51,224 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Calendar
+import java.util.TimeZone
 
 private fun day(t: Long) = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(t))
 
+
+private fun localDateToPickerMillis(timestamp: Long): Long {
+    val local = Calendar.getInstance().apply { timeInMillis = timestamp }
+    return Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(local.get(Calendar.YEAR), local.get(Calendar.MONTH), local.get(Calendar.DAY_OF_MONTH), 12, 0, 0)
+    }.timeInMillis
+}
+
+private fun pickerMillisToLocalDay(timestamp: Long): Long {
+    val utc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = timestamp }
+    return Calendar.getInstance().apply {
+        clear()
+        set(utc.get(Calendar.YEAR), utc.get(Calendar.MONTH), utc.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+    }.timeInMillis
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateRangeSelector(
+    startMs: Long,
+    endMs: Long,
+    color: Color,
+    onStartChange: (Long) -> Unit,
+    onEndChange: (Long) -> Unit
+) {
+    var showStart by remember { mutableStateOf(false) }
+    var showEnd by remember { mutableStateOf(false) }
+    Panel {
+        Text("Période personnalisée", fontWeight = FontWeight.SemiBold)
+        Text("Choisissez les dates à analyser.", fontSize = 12.sp, color = muted)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { showStart = true }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Rounded.CalendarMonth, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Column {
+                    Text("Début", fontSize = 10.sp, color = muted)
+                    Text(day(startMs), fontSize = 12.sp, color = color)
+                }
+            }
+            OutlinedButton(onClick = { showEnd = true }, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Rounded.Event, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Column {
+                    Text("Fin", fontSize = 10.sp, color = muted)
+                    Text(day(endMs), fontSize = 12.sp, color = color)
+                }
+            }
+        }
+        TextButton(onClick = {
+            onStartChange(Collectors.midnight(6))
+            onEndChange(System.currentTimeMillis())
+        }, modifier = Modifier.align(Alignment.End)) { Text("7 derniers jours") }
+    }
+    if (showStart) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = localDateToPickerMillis(startMs))
+        DatePickerDialog(
+            onDismissRequest = { showStart = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { selected ->
+                        val date = pickerMillisToLocalDay(selected)
+                        onStartChange(date)
+                        if (date > endMs) onEndChange(date)
+                    }
+                    showStart = false
+                }) { Text("Valider") }
+            },
+            dismissButton = { TextButton(onClick = { showStart = false }) { Text("Annuler") } }
+        ) { DatePicker(state = state, title = { Text("Date de début") }, showModeToggle = true) }
+    }
+    if (showEnd) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = localDateToPickerMillis(endMs))
+        DatePickerDialog(
+            onDismissRequest = { showEnd = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { selected ->
+                        val date = pickerMillisToLocalDay(selected)
+                        onEndChange(date)
+                        if (date < startMs) onStartChange(date)
+                    }
+                    showEnd = false
+                }) { Text("Valider") }
+            },
+            dismissButton = { TextButton(onClick = { showEnd = false }) { Text("Annuler") } }
+        ) { DatePicker(state = state, title = { Text("Date de fin") }, showModeToggle = true) }
+    }
+}
+
+
+@Composable
+private fun QuickControlsCard() {
+    val ctx = LocalContext.current
+    val resume = rememberResumeTick()
+    val bluetoothPermission = if (Build.VERSION.SDK_INT >= 31) Manifest.permission.BLUETOOTH_CONNECT else Manifest.permission.BLUETOOTH
+    var bluetoothGranted by remember {
+        mutableStateOf(Build.VERSION.SDK_INT < 31 || ctx.checkSelfPermission(bluetoothPermission) == PackageManager.PERMISSION_GRANTED)
+    }
+    val bluetoothPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        bluetoothGranted = it
+    }
+    val wifiEnabled = runCatching {
+        (ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).isWifiEnabled
+    }.getOrNull()
+    val connectivity = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val caps = runCatching { connectivity.getNetworkCapabilities(connectivity.activeNetwork) }.getOrNull()
+    val wifiConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    val mobileConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+    val bluetoothEnabled = if (bluetoothGranted) runCatching {
+        (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.isEnabled
+    }.getOrNull() else null
+    val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    val ringer = when (audio.ringerMode) {
+        AudioManager.RINGER_MODE_SILENT -> "Silencieux"
+        AudioManager.RINGER_MODE_VIBRATE -> "Vibreur"
+        else -> "Sonnerie"
+    }
+    val brightness = runCatching {
+        android.provider.Settings.System.getInt(ctx.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS)
+            .let { "${(it / 255f * 100).toInt()} %" }
+    }.getOrDefault("—")
+    fun open(action: String, fallback: String? = null) {
+        runCatching {
+            ctx.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            if (fallback != null) runCatching { ctx.startActivity(Intent(fallback).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Commandes rapides", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("État actuel et accès aux réglages Android", fontSize = 12.sp, color = muted)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        QuickStatusRow(Icons.Rounded.Wifi, "Wi-Fi", when (wifiEnabled) {
+            true -> if (wifiConnected) "Activé · connecté" else "Activé · non connecté"
+            false -> "Désactivé"
+            else -> "État indisponible"
+        }, wifiEnabled == true)
+        QuickStatusRow(Icons.Rounded.SignalCellularAlt, "Données mobiles", if (mobileConnected) "Connexion mobile active" else "Pas de connexion mobile active", mobileConnected)
+        QuickStatusRow(Icons.Rounded.WifiTethering, "Hotspot", "État à vérifier dans Android", false)
+        QuickStatusRow(Icons.Rounded.Bluetooth, "Bluetooth", when (bluetoothEnabled) {
+            true -> "Activé"
+            false -> "Désactivé"
+            null -> if (bluetoothGranted) "État indisponible" else "Autorisation nécessaire"
+        }, bluetoothEnabled == true)
+        QuickStatusRow(Icons.Rounded.VolumeUp, "Son", ringer, audio.ringerMode == AudioManager.RINGER_MODE_NORMAL)
+        QuickStatusRow(Icons.Rounded.Brightness6, "Luminosité", brightness, false)
+        Text("Android réserve certaines bascules (notamment données mobiles et hotspot) au panneau système. Ces raccourcis ouvrent les réglages officiels sans contourner ces protections.", fontSize = 11.sp, color = muted)
+        Spacer(Modifier.height(8.dp))
+        val controls: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, () -> Unit>> = listOf(
+            Triple("Wi-Fi", Icons.Rounded.Wifi, { open(Settings.Panel.ACTION_WIFI, Settings.ACTION_WIFI_SETTINGS) }),
+            Triple("Internet", Icons.Rounded.SignalCellularAlt, { open(Settings.Panel.ACTION_INTERNET_CONNECTIVITY, Settings.ACTION_WIRELESS_SETTINGS) }),
+            Triple("Hotspot", Icons.Rounded.WifiTethering, { open("android.settings.TETHER_SETTINGS", Settings.ACTION_WIRELESS_SETTINGS) }),
+            Triple("Bluetooth", Icons.Rounded.Bluetooth, {
+                if (!bluetoothGranted && Build.VERSION.SDK_INT >= 31) bluetoothPermissionLauncher.launch(bluetoothPermission)
+                else open("android.settings.panel.action.BLUETOOTH", Settings.ACTION_BLUETOOTH_SETTINGS)
+            }),
+            Triple("Son", Icons.Rounded.VolumeUp, { open(Settings.ACTION_SOUND_SETTINGS, Settings.ACTION_SETTINGS) }),
+            Triple("Luminosité", Icons.Rounded.Brightness6, { open(Settings.ACTION_DISPLAY_SETTINGS, Settings.ACTION_SETTINGS) })
+        )
+        controls.chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (label, icon, action) ->
+                    OutlinedButton(onClick = action, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(icon, null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.height(3.dp))
+                            Text(label, fontSize = 10.sp, maxLines = 1)
+                        }
+                    }
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickStatusRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String, active: Boolean) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = if (active) MaterialTheme.colorScheme.primary else muted, modifier = Modifier.size(19.dp))
+        Spacer(Modifier.width(9.dp))
+        Text(label, modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(value, fontSize = 11.sp, color = if (active) MaterialTheme.colorScheme.primary else muted, maxLines = 2)
+    }
+}
+
+
 // =============== ACCUEIL ===============
 @Composable
-fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
+fun HomeScreen(
+    user: User,
+    onOpen: (Cat) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenDevice: () -> Unit,
+    onSignOut: () -> Unit
+) {
     val ctx = LocalContext.current
+    val compactCards = Prefs.compactCards(ctx)
+    var searchQuery by remember { mutableStateOf("") }
+    var favoritesOnly by remember { mutableStateOf(false) }
+    var favoriteModules by remember { mutableStateOf(Prefs.favoriteModules(ctx)) }
+    val visibleCats = Cat.values().toList().filter { cat ->
+        (searchQuery.isBlank() || cat.title.contains(searchQuery, ignoreCase = true) || cat.sub.contains(searchQuery, ignoreCase = true)) &&
+            (!favoritesOnly || cat.name in favoriteModules)
+    }
     val deviceState by loadState(0) { Collectors.device(ctx) }
 
     Column(
@@ -51,16 +278,15 @@ fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
             .verticalScroll(rememberScrollState())
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("MobileScope", fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    if (user.guest) "Mode invité" else "Bonjour, ${user.name}",
-                    fontSize = 13.sp,
-                    color = muted
-                )
+                Text("MobileScope", fontSize = 27.sp, fontWeight = FontWeight.Bold)
+                Text("Tableau de bord intelligent", fontSize = 12.sp, color = muted)
+            }
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Rounded.Tune, "Préférences", tint = muted)
             }
             IconButton(onClick = onSignOut) {
                 Icon(Icons.Rounded.Logout, "Se déconnecter", tint = muted)
@@ -68,51 +294,250 @@ fun HomeScreen(user: User, onOpen: (Cat) -> Unit, onSignOut: () -> Unit) {
         }
 
         Column(
-            Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            Modifier.navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            SectionTitle("Votre appareil")
-            Loaded(deviceState) { device ->
-                Panel {
-                    Text(device.model, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(5.dp))
-                    Text(device.android, fontSize = 13.sp, color = muted)
-                    Spacer(Modifier.height(12.dp))
-                    Legend(MaterialTheme.colorScheme.primary, "Correctif de sécurité", device.patch)
-                    Legend(MaterialTheme.colorScheme.primary, "Processeurs", "${device.cores} cœurs")
-                    Legend(MaterialTheme.colorScheme.primary, "Écran", device.screen)
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!user.photo.isNullOrBlank()) {
+                        AsyncImage(
+                            model = user.photo,
+                            contentDescription = "Photo de profil Google",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(66.dp).clip(CircleShape)
+                        )
+                    } else {
+                        Box(
+                            Modifier.size(66.dp).clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = .14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.AccountCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (user.guest) "Mode invité" else "Bonjour,", fontSize = 12.sp, color = muted)
+                        Text(user.name.ifBlank { "Utilisateur MobileScope" }, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (!user.guest && user.email.isNotBlank()) {
+                            Spacer(Modifier.height(2.dp))
+                            Text(user.email, fontSize = 12.sp, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(onClick = onOpenDevice, label = { Text("Mon appareil") }, leadingIcon = {
+                        Icon(Icons.Rounded.Smartphone, null, modifier = Modifier.size(17.dp))
+                    })
+                    AssistChip(onClick = onOpenSettings, label = { Text("Personnaliser") }, leadingIcon = {
+                        Icon(Icons.Rounded.Tune, null, modifier = Modifier.size(17.dp))
+                    })
                 }
             }
 
-            SectionTitle("Diagnostic du téléphone")
-            Cat.values().forEach { cat ->
-                Row(
-                    Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
-                        .clickable { onOpen(cat) }
-                        .padding(15.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
-                            .background(cat.color.copy(alpha = .15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(cat.icon, null, tint = cat.color, modifier = Modifier.size(25.dp))
+            SectionTitle("APERÇU DE L'APPAREIL")
+            Loaded(deviceState) { device ->
+                Panel {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(48.dp).clip(RoundedCornerShape(15.dp))
+                                .background(Color(0xFF14B8D4).copy(alpha = .15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.PhoneAndroid, null, tint = Color(0xFF14B8D4), modifier = Modifier.size(27.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(device.model, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text(device.android, fontSize = 12.sp, color = muted)
+                        }
+                        IconButton(onClick = onOpenDevice) {
+                            Icon(Icons.Rounded.ChevronRight, "Détails de l'appareil", tint = muted)
+                        }
                     }
-                    Spacer(Modifier.width(13.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Legend(MaterialTheme.colorScheme.primary, "Processeur", "${device.cores} cœurs")
+                    Legend(MaterialTheme.colorScheme.primary, "Écran", device.screen)
+                    Legend(MaterialTheme.colorScheme.primary, "Correctif de sécurité", device.patch)
+                    TextButton(onClick = onOpenDevice, modifier = Modifier.align(Alignment.End)) {
+                        Text("Tous les détails")
+                        Icon(Icons.Rounded.ArrowForward, null, modifier = Modifier.padding(start = 6.dp).size(16.dp))
+                    }
+                }
+            }
+
+            QuickControlsCard()
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Centre de diagnostic", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Ouvrez une carte pour explorer ses données.", fontSize = 12.sp, color = muted)
+                }
+                Text("${Cat.values().size} modules", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+            }
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (searchQuery.isNotBlank()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Rounded.Close, "Effacer la recherche")
+                        }
+                    }
+                },
+                placeholder = { Text("Rechercher un module…") }
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(
+                    selected = !favoritesOnly,
+                    onClick = { favoritesOnly = false },
+                    label = { Text("Tous les modules") },
+                    leadingIcon = { Icon(Icons.Rounded.GridView, null, modifier = Modifier.size(17.dp)) }
+                )
+                FilterChip(
+                    selected = favoritesOnly,
+                    onClick = { favoritesOnly = true },
+                    label = { Text("Favoris (${favoriteModules.size})") },
+                    leadingIcon = { Icon(Icons.Rounded.Star, null, modifier = Modifier.size(17.dp)) }
+                )
+            }
+            if (visibleCats.isEmpty()) {
+                Panel {
+                    Icon(Icons.Rounded.SearchOff, null, tint = muted, modifier = Modifier.size(30.dp))
+                    Spacer(Modifier.height(8.dp))
+                    Text(if (favoritesOnly) "Aucun module favori" else "Aucun module trouvé", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (favoritesOnly) "Ajoutez des cartes aux favoris depuis leur menu ⋮." else "Essayez un autre terme de recherche.",
+                        color = muted, fontSize = 12.sp
+                    )
+                }
+            }
+            visibleCats.chunked(2).forEach { rowCats ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    rowCats.forEach { cat ->
+                        var menuExpanded by remember(cat) { mutableStateOf(false) }
+                        var infoOpen by remember(cat) { mutableStateOf(false) }
+                        Column(
+                            Modifier.weight(1f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                                .clickable { onOpen(cat) }
+                                .padding(if (compactCards) 10.dp else 14.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Box(
+                                    Modifier.size(43.dp).clip(RoundedCornerShape(14.dp))
+                                        .background(cat.color.copy(alpha = .15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(cat.icon, null, tint = cat.color, modifier = Modifier.size(24.dp))
+                                }
+                                Spacer(Modifier.weight(1f))
+                                Box {
+                                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(30.dp)) {
+                                        Icon(Icons.Rounded.MoreVert, "Options de ${cat.title}", tint = muted, modifier = Modifier.size(19.dp))
+                                    }
+                                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (cat.name in favoriteModules) "Retirer des favoris" else "Ajouter aux favoris") },
+                                            leadingIcon = { Icon(if (cat.name in favoriteModules) Icons.Rounded.Star else Icons.Rounded.StarBorder, null) },
+                                            onClick = {
+                                                menuExpanded = false
+                                                Prefs.toggleFavoriteModule(ctx, cat.name)
+                                                favoriteModules = Prefs.favoriteModules(ctx)
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Ouvrir le module") },
+                                            leadingIcon = { Icon(Icons.Rounded.OpenInNew, null) },
+                                            onClick = { menuExpanded = false; onOpen(cat) }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("À propos de cette carte") },
+                                            leadingIcon = { Icon(Icons.Rounded.Info, null) },
+                                            onClick = { menuExpanded = false; infoOpen = true }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Réglages associés") },
+                                            leadingIcon = { Icon(Icons.Rounded.Settings, null) },
+                                            onClick = { menuExpanded = false; openModuleSettings(ctx, cat) }
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Text(cat.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(4.dp))
+                            Text(cat.sub, fontSize = 11.sp, color = muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Explorer", fontSize = 12.sp, color = cat.color, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.width(4.dp))
+                                Icon(Icons.Rounded.ArrowForward, null, tint = cat.color, modifier = Modifier.size(15.dp))
+                            }
+                        }
+                        if (infoOpen) {
+                            AlertDialog(
+                                onDismissRequest = { infoOpen = false },
+                                icon = { Icon(cat.icon, null, tint = cat.color) },
+                                title = { Text(cat.title) },
+                                text = {
+                                    Text(
+                                        when (cat) {
+                                            Cat.Ram -> "Suivez l'occupation de la mémoire en direct, la mémoire disponible, le cache et le swap avec un graphique d'évolution."
+                                            Cat.Battery -> "Consultez le niveau, la température, la tension, l'état de santé, le courant et les données de charge disponibles."
+                                            Cat.Network -> "Analysez la connexion, les transferts Wi-Fi et mobiles, les périodes et les applications consommatrices."
+                                            Cat.Storage -> "Explorez l'espace utilisé, l'espace libre et les applications qui occupent le plus de stockage."
+                                            Cat.Contacts -> "Comptez les contacts, repérez les doublons et consultez les favoris. L'accès au carnet est demandé uniquement si nécessaire."
+                                            Cat.Calls -> "Analysez les appels sur 30 jours, les durées, les appels manqués et les correspondants les plus fréquents."
+                                            Cat.Sms -> "Consultez les volumes de SMS envoyés et reçus et leur évolution. Le contenu des messages n'est pas affiché."
+                                            Cat.Apps -> "Examinez les applications installées, les usages disponibles et les installations récentes."
+                                        }
+                                    )
+                                },
+                                confirmButton = { TextButton(onClick = { infoOpen = false; onOpen(cat) }) { Text("Explorer") } },
+                                dismissButton = { TextButton(onClick = { infoOpen = false }) { Text("Fermer") } }
+                            )
+                        }
+                    }
+                    if (rowCats.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Insights, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(cat.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(2.dp))
-                        Text(cat.sub, fontSize = 12.sp, color = muted)
+                        Text("Données et graphiques", fontWeight = FontWeight.SemiBold)
+                        Text("Chaque module propose ses indicateurs, ses détails et ses visualisations lorsque les données sont disponibles.", fontSize = 12.sp, color = muted)
                     }
-                    Icon(Icons.Rounded.ChevronRight, null, tint = muted)
                 }
             }
         }
     }
+}
+
+
+private fun openModuleSettings(ctx: android.content.Context, cat: Cat) {
+    val intent = when (cat) {
+        Cat.Network -> Intent(Settings.ACTION_WIFI_SETTINGS)
+        Cat.Battery -> Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+        Cat.Apps, Cat.Ram -> Intent(Settings.ACTION_APPLICATION_SETTINGS)
+        Cat.Storage -> Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+        Cat.Contacts, Cat.Calls, Cat.Sms -> Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${ctx.packageName}")
+        )
+    }
+    runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 // =============== CONTACTS ===============
@@ -121,39 +546,128 @@ fun ContactsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cat = Cat.Contacts
     var tick by remember { mutableIntStateOf(0) }
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf("Tous") }
+    var limit by remember { mutableIntStateOf(100) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_CONTACTS),
-            "MobileScope lit votre carnet pour compter vos contacts, repérer les doublons et afficher vos favoris. Les données restent sur l'appareil.") {
+            "MobileScope lit votre carnet pour afficher les fiches, les numéros, les e-mails, les favoris et les cas particuliers. Les données restent sur l'appareil.") {
             val st by loadState(tick) { Collectors.contacts(ctx) }
             Loaded(st) { r ->
                 val frac = if (r.total > 0) r.withPhone.toFloat() / r.total else 0f
-                Hero(cat.color, frac, "${Fmt.pct(frac)} ont un numéro", "${r.withEmail} contacts ont un e-mail, ${r.starred} sont en favoris.") {
+                Hero(cat.color, frac, "${Fmt.pct(frac)} ont un numéro",
+                    "${r.withEmail} avec e-mail · ${r.starred} favoris · ${r.dupNumbers} groupes de numéros en doublon.") {
                     BigValue("${r.total}", "contacts")
                 }
                 TilesGrid(listOf(
                     Tile("Avec numéro", "${r.withPhone}", Icons.Rounded.Call),
+                    Tile("Sans numéro", "${r.total - r.withPhone}", Icons.Rounded.Person),
                     Tile("Avec e-mail", "${r.withEmail}", Icons.Rounded.Email),
                     Tile("Favoris", "${r.starred}", Icons.Rounded.Star),
                     Tile("Numéros en doublon", "${r.dupNumbers}", Icons.Rounded.ContentCopy)
                 ), cat.color)
-                if (r.favorites.isNotEmpty()) {
-                    SectionTitle("Favoris")
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it; limit = 100 },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(15.dp),
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotBlank()) IconButton(onClick = { query = ""; limit = 100 }) {
+                            Icon(Icons.Rounded.Close, "Effacer")
+                        }
+                    },
+                    placeholder = { Text("Rechercher un nom ou un numéro…") }
+                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Tous", "Favoris", "Sans numéro", "Avec e-mail", "Doublons").forEach { option ->
+                        FilterChip(
+                            selected = filter == option,
+                            onClick = { filter = option; limit = 100 },
+                            label = { Text(option) }
+                        )
+                    }
+                }
+                val filtered = r.contacts.filter { contact ->
+                    val matchesQuery = query.isBlank() ||
+                        contact.name.contains(query, ignoreCase = true) ||
+                        (contact.number?.contains(query, ignoreCase = true) == true)
+                    val matchesFilter = when (filter) {
+                        "Favoris" -> contact.starred
+                        "Sans numéro" -> contact.number.isNullOrBlank()
+                        "Avec e-mail" -> contact.hasEmail
+                        "Doublons" -> contact.duplicateNumber
+                        else -> true
+                    }
+                    matchesQuery && matchesFilter
+                }
+                SectionTitle("Contacts (${filtered.size})")
+                if (filtered.isEmpty()) {
                     Panel {
-                        r.favorites.forEach { c ->
-                            Row(Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(38.dp).clip(CircleShape).background(cat.color.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
-                                    Text(c.name.take(1).uppercase(), color = cat.color, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Rounded.Search, null, tint = muted, modifier = Modifier.size(30.dp))
+                        Text("Aucun contact correspondant", fontWeight = FontWeight.SemiBold)
+                        Text("Changez le filtre ou la recherche.", fontSize = 12.sp, color = muted)
+                    }
+                } else {
+                    Panel {
+                        filtered.take(limit).forEachIndexed { index, contact ->
+                            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .25f))
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    runCatching {
+                                        ctx.startActivity(Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contact.id.toString())
+                                        ))
+                                    }
+                                }.padding(vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.size(42.dp).clip(CircleShape)
+                                        .background(cat.color.copy(alpha = .15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(contact.name.firstOrNull()?.uppercase() ?: "?", color = cat.color, fontWeight = FontWeight.Bold)
                                 }
-                                Spacer(Modifier.width(12.dp))
+                                Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(c.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (c.number != null) Text(c.number, fontSize = 12.sp, color = muted)
+                                    Text(contact.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        contact.number ?: "Aucun numéro enregistré",
+                                        fontSize = 12.sp,
+                                        color = if (contact.number == null) MaterialTheme.colorScheme.error else muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val tags = buildList {
+                                        if (contact.starred) add("Favori")
+                                        if (contact.hasEmail) add("E-mail")
+                                        if (contact.duplicateNumber) add("Numéro en doublon")
+                                        if (contact.number == null) add("Cas à compléter")
+                                    }
+                                    if (tags.isNotEmpty()) Text(tags.joinToString(" · "), fontSize = 10.sp, color = cat.color, maxLines = 1)
                                 }
-                                if (c.number != null) QuickActions(c.number, cat.color)
+                                if (!contact.number.isNullOrBlank()) QuickActions(contact.number, cat.color)
+                                else Icon(Icons.Rounded.ChevronRight, "Ouvrir la fiche", tint = muted)
                             }
                         }
                     }
+                    if (filtered.size > limit) {
+                        TextButton(onClick = { limit += 100 }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                            Text("Afficher davantage (${limit}/${filtered.size})")
+                        }
+                    }
                 }
+                Text(
+                    "Touchez une ligne pour ouvrir la fiche native du contact. Les contacts sans numéro restent accessibles pour être complétés.",
+                    fontSize = 12.sp, color = muted
+                )
             }
         }
     }
@@ -175,30 +689,65 @@ fun CallsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cat = Cat.Calls
     var tick by remember { mutableIntStateOf(0) }
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var selectedCallList by remember { mutableStateOf<String?>(null) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_CALL_LOG),
-            "MobileScope lit le journal d'appels des 30 derniers jours pour calculer vos durées et vos contacts les plus appelés.") {
-            val st by loadState(tick) { Collectors.calls(ctx) }
+            "MobileScope lit le journal d'appels uniquement pendant la période sélectionnée.") {
+            DateRangeSelector(startDate, endDate, cat.color,
+                onStartChange = { startDate = it; tick++ },
+                onEndChange = { endDate = it; tick++ })
+            val st by loadState(tick) { Collectors.calls(ctx, startDate, endDate) }
             Loaded(st) { r ->
                 val answered = r.incoming + r.outgoing
                 val frac = if (r.total > 0) answered.toFloat() / r.total else 0f
                 val talk = r.inSec + r.outSec
                 Hero(cat.color, frac, "${Fmt.duration(talk)} de conversation",
-                    if (answered > 0) "Durée moyenne ${Fmt.duration(talk / answered)} par appel abouti." else "Aucun appel abouti sur 30 jours.") {
-                    BigValue("${r.total}", "appels · 30 j")
+                    if (answered > 0) "Durée moyenne ${Fmt.duration(talk / answered)} par appel abouti." else "Aucun appel abouti pendant cette période.") {
+                    BigValue("${r.total}", "appels")
                 }
                 TilesGrid(listOf(
                     Tile("Entrants", "${r.incoming}", Icons.Rounded.CallReceived),
                     Tile("Sortants", "${r.outgoing}", Icons.Rounded.CallMade),
-                    Tile("Manqués", "${r.missed}", Icons.Rounded.CallMissed),
-                    Tile("Rejetés", "${r.rejected}", Icons.Rounded.Block),
                     Tile("Temps en réception", Fmt.duration(r.inSec), Icons.Rounded.Schedule),
                     Tile("Plus long appel", Fmt.duration(r.longest), Icons.Rounded.Timer)
                 ), cat.color)
-                SectionTitle("Appels sur 7 jours")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Panel(Modifier.weight(1f).clickable { selectedCallList = if (selectedCallList == "missed") null else "missed" }) {
+                        Icon(Icons.Rounded.CallMissed, null, tint = cat.color)
+                        Text("${r.missed}", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("Appels manqués", fontSize = 12.sp)
+                        Text("Toucher pour afficher", fontSize = 10.sp, color = muted)
+                    }
+                    Panel(Modifier.weight(1f).clickable { selectedCallList = if (selectedCallList == "rejected") null else "rejected" }) {
+                        Icon(Icons.Rounded.Block, null, tint = cat.color)
+                        Text("${r.rejected}", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text("Appels refusés", fontSize = 12.sp)
+                        Text("Toucher pour afficher", fontSize = 10.sp, color = muted)
+                    }
+                }
+                val entries = when (selectedCallList) {
+                    "missed" -> r.missedCalls
+                    "rejected" -> r.rejectedCalls
+                    else -> emptyList()
+                }
+                if (selectedCallList != null) {
+                    SectionTitle(if (selectedCallList == "missed") "Liste des appels manqués" else "Liste des appels refusés")
+                    if (entries.isEmpty()) {
+                        Panel { Text("Aucun appel dans cette catégorie pour la période choisie.", color = muted) }
+                    } else Panel {
+                        entries.forEachIndexed { index, entry ->
+                            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .3f))
+                            CallEntryRow(entry, cat.color)
+                        }
+                        if (entries.size == 300) Text("Affichage limité aux 300 entrées les plus récentes.", fontSize = 11.sp, color = muted)
+                    }
+                }
+                SectionTitle("Volume d'appels par jour")
                 Panel {
-                    val labels = Collectors.dayLabels(7)
-                    BarChart(r.perDay.mapIndexed { i, v -> Bar(labels[i], listOf(v.toFloat())) }, listOf(cat.color))
+                    BarChart(r.perDay.mapIndexed { i, v -> Bar(r.dayLabels.getOrElse(i) { "J${i + 1}" }, listOf(v.toFloat())) }, listOf(cat.color))
+                    Text("Période : ${r.dayLabels.firstOrNull() ?: "—"} – ${r.dayLabels.lastOrNull() ?: "—"} · ${r.total} appels.", fontSize = 11.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Contacts les plus fréquents")
@@ -209,22 +758,48 @@ fun CallsScreen(onBack: () -> Unit) {
     }
 }
 
+@Composable
+private fun CallEntryRow(entry: CallEntry, color: Color) {
+    val ctx = LocalContext.current
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(entry.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(entry.number.ifBlank { "Numéro masqué" }, fontSize = 12.sp, color = muted)
+            Text("${SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date(entry.date))} · ${Fmt.duration(entry.durationSec)}",
+                fontSize = 11.sp, color = muted)
+        }
+        if (entry.number.isNotBlank()) QuickActions(entry.number, color)
+        IconButton(onClick = {
+            runCatching {
+                ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("content://call_log/calls")))
+            }
+        }) { Icon(Icons.Rounded.History, "Ouvrir le journal d'appels", tint = color) }
+    }
+}
+
 // =============== SMS ===============
 @Composable
 fun SmsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cat = Cat.Sms
     var tick by remember { mutableIntStateOf(0) }
+    var smsView by remember { mutableIntStateOf(0) }
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DetailScaffold(cat, onBack, { tick++ }) {
         PermissionGate(cat, listOf(Manifest.permission.READ_SMS),
-            "MobileScope compte vos SMS reçus et envoyés sur 30 jours. Le contenu des messages n'est jamais affiché ni transmis, seule leur longueur est mesurée.") {
-            val st by loadState(tick) { Collectors.sms(ctx) }
+            "MobileScope compte les SMS reçus et envoyés pendant la période sélectionnée. Le contenu n'est jamais affiché ni transmis.") {
+            DateRangeSelector(startDate, endDate, cat.color,
+                onStartChange = { startDate = it; tick++ },
+                onEndChange = { endDate = it; tick++ })
+            val st by loadState(tick) { Collectors.sms(ctx, startDate, endDate) }
             Loaded(st) { r ->
                 val total = r.received + r.sent
                 val frac = if (total > 0) r.sent.toFloat() / total else 0f
+                val periodDays = r.dayLabels.size.coerceAtLeast(1)
                 Hero(cat.color, frac, "${r.sent} envoyés, ${r.received} reçus",
-                    "Moyenne de ${"%.1f".format(Locale.getDefault(), total / 30f)} messages par jour.") {
-                    BigValue("$total", "SMS · 30 j")
+                    "Moyenne de ${"%.1f".format(Locale.getDefault(), total / periodDays.toFloat())} messages par jour.") {
+                    BigValue("$total", "SMS")
                 }
                 TilesGrid(listOf(
                     Tile("Reçus", "${r.received}", Icons.Rounded.Download),
@@ -232,20 +807,38 @@ fun SmsScreen(onBack: () -> Unit) {
                     Tile("Caractères reçus", "${r.charsReceived}"),
                     Tile("Caractères envoyés", "${r.charsSent}")
                 ), cat.color)
-                SectionTitle("Activité sur 7 jours")
+                SectionTitle("Activité quotidienne")
+                Segmented(listOf("Reçus + envoyés", "Reçus", "Envoyés"), smsView, cat.color) { smsView = it }
                 Panel {
-                    val labels = Collectors.dayLabels(7)
-                    BarChart(
-                        r.recvPerDay.indices.map { Bar(labels[it], listOf(r.recvPerDay[it].toFloat(), r.sentPerDay[it].toFloat())) },
-                        listOf(cat.color, cat.color.copy(alpha = .4f))
-                    )
+                    val bars = r.recvPerDay.indices.map { i ->
+                        val values = when (smsView) {
+                            1 -> listOf(r.recvPerDay[i].toFloat())
+                            2 -> listOf(r.sentPerDay[i].toFloat())
+                            else -> listOf(r.recvPerDay[i].toFloat(), r.sentPerDay[i].toFloat())
+                        }
+                        Bar(r.dayLabels.getOrElse(i) { "J${i + 1}" }, values)
+                    }
+                    val colors = when (smsView) {
+                        1 -> listOf(cat.color)
+                        2 -> listOf(cat.color.copy(alpha = .48f))
+                        else -> listOf(cat.color, cat.color.copy(alpha = .48f))
+                    }
+                    if (total == 0) {
+                        Icon(Icons.Rounded.BarChart, null, tint = muted, modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.height(6.dp))
+                        Text("Aucun SMS trouvé sur cette période.", fontWeight = FontWeight.SemiBold)
+                        Text("Essayez une période plus large ou vérifiez l'autorisation SMS.", fontSize = 12.sp, color = muted)
+                    } else {
+                        BarChart(bars, colors)
+                    }
                     Spacer(Modifier.height(12.dp))
-                    Legend(cat.color, "Reçus", "${r.recvPerDay.sum()}")
-                    Legend(cat.color.copy(alpha = .4f), "Envoyés", "${r.sentPerDay.sum()}")
+                    if (smsView != 2) Legend(cat.color, "Reçus", "${r.recvPerDay.sum()}")
+                    if (smsView != 1) Legend(cat.color.copy(alpha = .48f), "Envoyés", "${r.sentPerDay.sum()}")
+                    Text("Du ${r.dayLabels.firstOrNull() ?: "—"} au ${r.dayLabels.lastOrNull() ?: "—"} · ${r.dayLabels.size} jours.", fontSize = 11.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Correspondants les plus actifs")
-                    TopList(r.top, cat.color) { it.number }
+                    TopList(r.top, cat.color) { "${it.count} SMS · ${it.number}" }
                 }
             }
         }
@@ -259,9 +852,10 @@ fun NetworkScreen(onBack: () -> Unit) {
     val cat = Cat.Network
     var tick by remember { mutableIntStateOf(0) }
     val resume = rememberResumeTick()
-    var sel by remember { mutableIntStateOf(1) }
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DetailScaffold(cat, onBack, { tick++ }) {
-        val st by loadState(tick + resume * 1000) { Collectors.network(ctx) }
+        val st by loadState(tick + resume * 1000) { Collectors.network(ctx, startDate, endDate) }
         Loaded(st) { r ->
             val quality = when {
                 !r.online -> 0f
@@ -276,7 +870,10 @@ fun NetworkScreen(onBack: () -> Unit) {
             Hero(cat.color, quality, r.type, extra) {
                 Icon(Icons.Rounded.Wifi, null, tint = cat.color, modifier = Modifier.size(40.dp))
             }
-            SectionTitle("Depuis le dernier démarrage")
+            DateRangeSelector(startDate, endDate, cat.color,
+                onStartChange = { startDate = it; tick++ },
+                onEndChange = { endDate = it; tick++ })
+            SectionTitle("Depuis le dernier démarrage (cumulé)")
             TilesGrid(listOf(
                 Tile("Reçu (total)", Fmt.bytes(r.boot.rx), Icons.Rounded.Download),
                 Tile("Envoyé (total)", Fmt.bytes(r.boot.tx), Icons.Rounded.CallMade),
@@ -286,8 +883,7 @@ fun NetworkScreen(onBack: () -> Unit) {
             if (!r.hasAccess || r.periods.isEmpty()) {
                 UsageAccessBanner(cat, resume, "Autorisez MobileScope dans « Accès aux données d'utilisation » pour voir la consommation par jour, par période et par application.")
             } else {
-                val p = r.periods[sel.coerceIn(0, r.periods.lastIndex)]
-                Segmented(r.periods.map { it.label }, sel, cat.color) { sel = it }
+                val p = r.periods.first()
                 Panel {
                     val tw = p.wifi.total.toFloat(); val tm = p.mobile.total.toFloat()
                     Text(Fmt.bytes(p.wifi.total + p.mobile.total), fontSize = 30.sp, fontWeight = FontWeight.Bold)
@@ -304,7 +900,7 @@ fun NetworkScreen(onBack: () -> Unit) {
                     Tile("Mobile reçu", Fmt.bytes(p.mobile.rx), Icons.Rounded.Download),
                     Tile("Mobile envoyé", Fmt.bytes(p.mobile.tx), Icons.Rounded.CallMade)
                 ), cat.color)
-                SectionTitle("7 derniers jours")
+                SectionTitle("Trafic quotidien · période sélectionnée")
                 Panel {
                     BarChart(r.days.map { Bar(it.label, listOf(it.wifi.toFloat(), it.mobile.toFloat())) }, listOf(cat.color, Color(0xFFFF8A3D)))
                 }
@@ -393,9 +989,17 @@ fun RamScreen(onBack: () -> Unit) {
                 BigValue(Fmt.pct(r.usedFrac), "en direct")
             }
             Panel {
-                Text("Occupation, 80 dernières secondes", fontSize = 13.sp, color = muted)
+                val samples = history.toList()
+                Text("Utilisation de la RAM · 80 dernières secondes", fontSize = 13.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
-                Sparkline(history.toList(), cat.color, Modifier.fillMaxWidth().height(90.dp))
+                Sparkline(samples, cat.color, Modifier.fillMaxWidth().height(100.dp), minValue = 0f, maxValue = 100f)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Min. ${samples.minOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} %", fontSize = 11.sp, color = muted)
+                    Text("Actuel ${"%.1f".format(Locale.getDefault(), r.usedFrac * 100f)} %", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cat.color)
+                    Text("Max. ${samples.maxOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} %", fontSize = 11.sp, color = muted)
+                }
+                Text("Échelle fixe : 0 à 100 % · un point toutes les 2 secondes.", fontSize = 11.sp, color = muted)
             }
             TilesGrid(listOf(
                 Tile("Totale", Fmt.bytes(r.total), Icons.Rounded.Memory),
@@ -435,9 +1039,17 @@ fun BatteryScreen(onBack: () -> Unit) {
                 BigValue("${r.percent}%", if (r.charging) "en charge" else "restant")
             }
             Panel {
-                Text("Température en direct", fontSize = 13.sp, color = muted)
+                val samples = history.toList()
+                Text("Température de la batterie · 2 dernières minutes", fontSize = 13.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
-                Sparkline(history.toList(), cat.color, Modifier.fillMaxWidth().height(80.dp))
+                Sparkline(samples, cat.color, Modifier.fillMaxWidth().height(96.dp), minValue = 10f, maxValue = 60f)
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Min. ${samples.minOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} °C", fontSize = 11.sp, color = muted)
+                    Text("Actuelle ${"%.1f".format(Locale.getDefault(), r.tempC)} °C", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cat.color)
+                    Text("Max. ${samples.maxOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} °C", fontSize = 11.sp, color = muted)
+                }
+                Text("Échelle fixe : 10 à 60 °C · un point toutes les 3 secondes.", fontSize = 11.sp, color = muted)
             }
             TilesGrid(listOf(
                 Tile("Température", "${"%.1f".format(Locale.getDefault(), r.tempC)} °C", Icons.Rounded.Thermostat),
@@ -460,8 +1072,10 @@ fun AppsScreen(onBack: () -> Unit) {
     val cat = Cat.Apps
     var tick by remember { mutableIntStateOf(0) }
     val resume = rememberResumeTick()
+    var startDate by remember { mutableLongStateOf(Collectors.midnight(6)) }
+    var endDate by remember { mutableLongStateOf(System.currentTimeMillis()) }
     DetailScaffold(cat, onBack, { tick++ }) {
-        val st by loadState(tick + resume * 1000) { Collectors.apps(ctx) }
+        val st by loadState(tick + resume * 1000) { Collectors.apps(ctx, startDate, endDate) }
         Loaded(st) { r ->
             val frac = if (r.total > 0) r.user.toFloat() / r.total else 0f
             Hero(cat.color, frac, "${r.user} applications installées par vous", "${r.system} applications système.") {
@@ -470,9 +1084,12 @@ fun AppsScreen(onBack: () -> Unit) {
             if (!r.hasAccess) {
                 UsageAccessBanner(cat, resume, "Autorisez MobileScope dans « Accès aux données d'utilisation » pour mesurer le temps passé sur chaque application.")
             } else {
+                DateRangeSelector(startDate, endDate, cat.color,
+                    onStartChange = { startDate = it; tick++ },
+                    onEndChange = { endDate = it; tick++ })
                 Panel {
                     Text(Fmt.duration(r.screenMs / 1000), fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                    Text("de temps d'utilisation sur 7 jours", fontSize = 12.sp, color = muted)
+                    Text("de temps d'utilisation sur la période sélectionnée", fontSize = 12.sp, color = muted)
                 }
                 if (r.top.isNotEmpty()) {
                     SectionTitle("Les plus utilisées")
