@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.medsel.mobilescope.BuildConfig
+import com.medsel.mobilescope.data.Backup
 import com.medsel.mobilescope.data.Background
 import com.medsel.mobilescope.data.Fmt
 import com.medsel.mobilescope.data.Prefs
@@ -70,6 +71,38 @@ fun AdvancedSettings(onLanguageChanged: (String) -> Unit) {
     var battery by remember { mutableIntStateOf(Prefs.alertBattery(ctx)) }
     var autoUpd by remember { mutableStateOf(Prefs.autoCheckUpdates(ctx)) }
     var confirmReset by remember { mutableStateOf(false) }
+    var goal by remember { mutableIntStateOf(Prefs.screenGoalMin(ctx)) }
+    var order by remember { mutableStateOf(orderedCats(Prefs.moduleOrder(ctx)).map { it.name }) }
+    var backupMsg by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            val ok = runCatching {
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(Backup.export(ctx).toByteArray(Charsets.UTF_8)) }
+            }.isSuccess
+            backupMsg = if (ok) "Sauvegarde enregistrée." else "Échec de la sauvegarde."
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val text = runCatching { ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+            val r = if (text != null) Backup.import(ctx, text) else null
+            if (r == null) {
+                backupMsg = "Fichier de sauvegarde invalide."
+            } else {
+                backupMsg = "Restauré : ${r.first} préférences, ${r.second} relevés."
+                (ctx as? Activity)?.recreate()
+            }
+        }
+    }
+
+    fun move(i: Int, d: Int) {
+        val m = order.toMutableList()
+        val t = m.removeAt(i)
+        m.add(i + d, t)
+        order = m
+        Prefs.saveModuleOrder(ctx, m)
+    }
 
     var update by remember { mutableStateOf<UpdateInfo?>(null) }
     var checking by remember { mutableStateOf(false) }
@@ -100,10 +133,10 @@ fun AdvancedSettings(onLanguageChanged: (String) -> Unit) {
     SectionTitle("LANGUE")
     Panel {
         Text("Langue de l'application", fontWeight = FontWeight.SemiBold)
-        Text("Français par défaut. L'anglais est appliqué immédiatement.", fontSize = 12.sp, color = muted)
+        Text("Français par défaut. La langue choisie est appliquée immédiatement.", fontSize = 12.sp, color = muted)
         Spacer(Modifier.height(10.dp))
-        Segmented(listOf("Français", "English"), if (lang == "en") 1 else 0, primary) {
-            lang = if (it == 1) "en" else "fr"
+        Segmented(listOf("Français", "English", "العربية"), when (lang) { "en" -> 1; "ar" -> 2; else -> 0 }, primary) {
+            lang = when (it) { 1 -> "en"; 2 -> "ar"; else -> "fr" }
             Prefs.saveLang(ctx, lang)
             onLanguageChanged(lang)
         }
@@ -138,6 +171,36 @@ fun AdvancedSettings(onLanguageChanged: (String) -> Unit) {
         SwitchRow("Commandes rapides", "Raccourcis Wi-Fi, Bluetooth, son et luminosité.", quick) {
             quick = it; Prefs.saveShowQuickControls(ctx, it)
         }
+    }
+
+    SectionTitle("OBJECTIFS")
+    Panel {
+        SliderRow("Temps d'écran quotidien", Fmt.duration(goal * 60L), goal, 30..480, { goal = (it / 15) * 15 }, { Prefs.saveScreenGoalMin(ctx, goal) })
+        Text("Utilisé par l'écran Temps d'écran pour mesurer votre objectif.", fontSize = 11.sp, color = muted)
+    }
+
+    SectionTitle("ORDRE DES CARTES")
+    Panel {
+        Text("Réorganisez les modules de l'accueil avec les flèches.", fontSize = 12.sp, color = muted)
+        Spacer(Modifier.height(6.dp))
+        order.forEachIndexed { i, name ->
+            val cat = Cat.valueOf(name)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(cat.icon, null, tint = cat.color, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(cat.title, modifier = Modifier.weight(1f))
+                IconButton(onClick = { move(i, -1) }, enabled = i > 0, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Rounded.KeyboardArrowUp, "Monter")
+                }
+                IconButton(onClick = { move(i, 1) }, enabled = i < order.lastIndex, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Rounded.KeyboardArrowDown, "Descendre")
+                }
+            }
+        }
+        TextButton(onClick = {
+            Prefs.saveModuleOrder(ctx, emptyList())
+            order = orderedCats(emptyList()).map { it.name }
+        }) { Text("Rétablir l'ordre d'origine") }
     }
 
     SectionTitle("HISTORIQUE ET ALERTES")
@@ -204,6 +267,29 @@ fun AdvancedSettings(onLanguageChanged: (String) -> Unit) {
         HorizontalDivider(Modifier.padding(vertical = 10.dp))
         SwitchRow("Vérifier au lancement", "Recherche automatiquement une nouvelle version.", autoUpd) {
             autoUpd = it; Prefs.saveAutoCheckUpdates(ctx, it)
+        }
+    }
+
+    SectionTitle("SAUVEGARDE")
+    Panel {
+        Text("Sauvegarder et restaurer", fontWeight = FontWeight.SemiBold)
+        Text("Exporte vos préférences et votre historique dans un fichier. Le compte Google n'est jamais inclus.", fontSize = 12.sp, color = muted)
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { exportLauncher.launch("mobilescope-sauvegarde.json") }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Icon(Icons.Rounded.Backup, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Sauvegarder", maxLines = 1)
+            }
+            OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Icon(Icons.Rounded.Restore, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Restaurer", maxLines = 1)
+            }
+        }
+        if (backupMsg != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(backupMsg!!, fontSize = 12.sp, color = primary)
         }
     }
 

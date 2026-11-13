@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
@@ -38,7 +39,7 @@ fun HealthMiniCard(onOpen: () -> Unit) {
                     Spacer(Modifier.height(4.dp))
                     Text(h.advice.first(), fontSize = 12.sp, color = muted, maxLines = 2)
                 }
-                Icon(Icons.Rounded.ChevronRight, null, tint = muted)
+                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = muted)
             }
         }
     }
@@ -54,7 +55,13 @@ fun AdvancedToolsRow(onOpen: (String) -> Unit) {
         Triple("sensors", "Capteurs", Icons.Rounded.Sensors),
         Triple("security", "Sécurité", Icons.Rounded.Security),
         Triple("nettools", "Réseau avancé", Icons.Rounded.NetworkCheck),
-        Triple("widgets", "Widgets", Icons.Rounded.Widgets)
+        Triple("widgets", "Widgets", Icons.Rounded.Widgets),
+        Triple("cleanup", "Nettoyage", Icons.Rounded.CleaningServices),
+        Triple("privacy", "Confidentialité", Icons.Rounded.Lock),
+        Triple("screentime", "Temps d'écran", Icons.Rounded.Schedule),
+        Triple("speed", "Débit en direct", Icons.Rounded.Speed),
+        Triple("dataplan", "Forfait data", Icons.Rounded.DataUsage),
+        Triple("autonomy", "Autonomie", Icons.Rounded.BatteryChargingFull)
     )
     Column {
         SectionTitle("OUTILS AVANCÉS")

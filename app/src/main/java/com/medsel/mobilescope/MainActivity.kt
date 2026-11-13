@@ -32,6 +32,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import com.medsel.mobilescope.data.Background
@@ -58,13 +60,17 @@ class MainActivity : ComponentActivity() {
             var accentMode by remember { mutableStateOf(Prefs.accent(this@MainActivity)) }
             var lang by remember { mutableStateOf(Prefs.lang(this@MainActivity)) }
             MobileScopeTheme(themeMode, accentMode) {
-                // key(lang) : changer de langue reconstruit l'interface (et recharge les libellés).
-                key(lang) {
-                    AppRoot(
-                        onThemeChanged = { themeMode = it },
-                        onAccentChanged = { accentMode = it },
-                        onLanguageChanged = { Tr.set(it); lang = it }
-                    )
+                // L'arabe s'écrit de droite à gauche ; key(lang) reconstruit l'interface au changement de langue.
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides (if (lang == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr)
+                ) {
+                    key(lang) {
+                        AppRoot(
+                            onThemeChanged = { themeMode = it },
+                            onAccentChanged = { accentMode = it },
+                            onLanguageChanged = { Tr.set(it); lang = it }
+                        )
+                    }
                 }
             }
         }
@@ -140,6 +146,12 @@ fun AppRoot(onThemeChanged: (String) -> Unit, onAccentChanged: (String) -> Unit,
                             "hardware" -> HardwareScreen(onBack = back)
                             "nettools" -> NetToolsScreen(onBack = back)
                             "widgets" -> WidgetsScreen(onBack = back)
+                            "cleanup" -> CleanupScreen(onBack = back)
+                            "privacy" -> PrivacyScreen(onBack = back)
+                            "screentime" -> ScreenTimeScreen(onBack = back)
+                            "speed" -> SpeedScreen(onBack = back)
+                            "dataplan" -> DataPlanScreen(onBack = back)
+                            "autonomy" -> AutonomyScreen(onBack = back)
                             else -> when (Cat.valueOf(r)) {
                                 Cat.Contacts -> ContactsScreen(back)
                                 Cat.Calls -> CallsScreen(back)

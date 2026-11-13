@@ -266,7 +266,7 @@ fun HomeScreen(
     var searchQuery by remember { mutableStateOf("") }
     var favoritesOnly by remember { mutableStateOf(false) }
     var favoriteModules by remember { mutableStateOf(Prefs.favoriteModules(ctx)) }
-    val visibleCats = Cat.values().toList().filter { cat ->
+    val visibleCats = orderedCats(Prefs.moduleOrder(ctx)).filter { cat ->
         (searchQuery.isBlank() || cat.title.contains(searchQuery, ignoreCase = true) || cat.sub.contains(searchQuery, ignoreCase = true)) &&
             (!favoritesOnly || cat.name in favoriteModules)
     }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -45,6 +46,8 @@ import com.medsel.mobilescope.data.Prefs
 import com.medsel.mobilescope.data.Tr
 import com.medsel.mobilescope.widget.BatteryWidget
 import com.medsel.mobilescope.widget.HealthWidget
+import com.medsel.mobilescope.widget.NetworkWidget
+import com.medsel.mobilescope.widget.StorageWidget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -109,7 +112,7 @@ fun ToolRow(icon: ImageVector, title: String, subtitle: String, color: Color, on
             Text(title, fontWeight = FontWeight.SemiBold)
             Text(subtitle, fontSize = 12.sp, color = muted)
         }
-        Icon(Icons.Rounded.ChevronRight, null, tint = muted)
+        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = muted)
     }
 }
 
@@ -124,13 +127,20 @@ private val TOOLS = listOf(
     ToolEntry("security", "Sécurité", "Contrôles de l'appareil", Icons.Rounded.Security, Color(0xFFFF6B5E)),
     ToolEntry("nettools", "Réseau avancé", "Latence et adresses IP", Icons.Rounded.NetworkCheck, Color(0xFFFFB020)),
     ToolEntry("device", "Mon appareil", "Fiche technique", Icons.Rounded.Smartphone, Color(0xFF8B7CFF)),
-    ToolEntry("widgets", "Widgets", "Écran d'accueil Android", Icons.Rounded.Widgets, Color(0xFF22C58B))
+    ToolEntry("widgets", "Widgets", "Écran d'accueil Android", Icons.Rounded.Widgets, Color(0xFF22C58B)),
+    ToolEntry("cleanup", "Nettoyage", "Caches, apps inutilisées", Icons.Rounded.CleaningServices, Color(0xFFFFB020)),
+    ToolEntry("privacy", "Confidentialité", "Qui a accès à quoi", Icons.Rounded.Lock, Color(0xFFFF6B5E)),
+    ToolEntry("screentime", "Temps d'écran", "Usage et objectif", Icons.Rounded.Schedule, Color(0xFF8B7CFF)),
+    ToolEntry("speed", "Débit en direct", "Vitesse et test", Icons.Rounded.Speed, Color(0xFF14B8D4)),
+    ToolEntry("dataplan", "Forfait data", "Suivi mensuel", Icons.Rounded.DataUsage, Color(0xFF4C8DFF)),
+    ToolEntry("autonomy", "Autonomie", "Estimation et charge", Icons.Rounded.BatteryChargingFull, Color(0xFF8FD11E))
 )
 
 @Composable
 fun ToolsHubScreen(onOpen: (String) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val makePdf = rememberPdfAction()
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
             .statusBarsPadding().verticalScroll(rememberScrollState())
@@ -160,6 +170,7 @@ fun ToolsHubScreen(onOpen: (String) -> Unit) {
                 }
             }
             SectionTitle("EXPORTER")
+            ToolRow(Icons.Rounded.Description, "Rapport PDF", "Santé, courbes sur 7 jours, sécurité et conseils", MaterialTheme.colorScheme.primary) { makePdf() }
             ToolRow(Icons.Rounded.Share, "Partager un rapport complet", "Santé, sécurité, mémoire, stockage, batterie", MaterialTheme.colorScheme.primary) {
                 scope.launch { shareText(ctx, "Rapport MobileScope", withContext(Dispatchers.IO) { Extras.report(ctx) }) }
             }
@@ -599,7 +610,7 @@ fun WidgetsScreen(onBack: () -> Unit) {
     val batteryCount = awm.getAppWidgetIds(ComponentName(ctx, BatteryWidget::class.java)).size
     ProScaffold("Widgets", "Sur votre écran d'accueil", Icons.Rounded.Widgets, Cat.Calls.color, onBack) {
         Panel {
-            Text("Deux widgets sont disponibles", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("Quatre widgets sont disponibles", fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
             Text("Ils se mettent à jour automatiquement environ toutes les 30 minutes et à chaque appui sur ↻. Un appui sur le widget ouvre MobileScope.", fontSize = 12.sp, color = muted)
         }
@@ -608,6 +619,12 @@ fun WidgetsScreen(onBack: () -> Unit) {
         }
         ToolRow(Icons.Rounded.BatteryChargingFull, "Widget Batterie", "Niveau, état, température, tension · $batteryCount actif(s)", Color(0xFF2DD4F0)) {
             pinWidget(ctx, BatteryWidget::class.java)
+        }
+        ToolRow(Icons.Rounded.Wifi, "Widget Réseau", "Connexion, trafic et forfait data", Color(0xFF14B8D4)) {
+            pinWidget(ctx, NetworkWidget::class.java)
+        }
+        ToolRow(Icons.Rounded.Storage, "Widget Stockage", "Occupation et espace libre", Color(0xFFFFB020)) {
+            pinWidget(ctx, StorageWidget::class.java)
         }
         Text("Si le bouton n'affiche rien, faites un appui long sur l'écran d'accueil, choisissez Widgets, puis MobileScope.", fontSize = 11.sp, color = muted)
     }

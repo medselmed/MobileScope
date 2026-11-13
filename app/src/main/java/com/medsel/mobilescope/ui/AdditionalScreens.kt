@@ -61,7 +61,7 @@ fun SettingsScreen(
                 Text("Thème de l'application", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Text("Choisissez un affichage clair, sombre ou celui du système.", fontSize = 12.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
-                listOf("system" to "Automatique (système)", "dark" to "Sombre", "light" to "Clair").forEach { (value, label) ->
+                listOf("system" to "Automatique (système)", "dark" to "Sombre", "amoled" to "Noir pur (AMOLED)", "light" to "Clair").forEach { (value, label) ->
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                             .clickable {

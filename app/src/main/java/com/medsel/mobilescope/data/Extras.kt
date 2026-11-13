@@ -66,7 +66,17 @@ object Extras {
         if (d == null) null else (System.currentTimeMillis() - d.time) / 86_400_000L
     } catch (_: Exception) { null }
 
+    private var secCache: Pair<Long, SecurityReport>? = null
+
     fun security(ctx: Context): SecurityReport {
+        val c = secCache
+        if (c != null && System.currentTimeMillis() - c.first < 60_000L) return c.second
+        val r = buildSecurity(ctx)
+        secCache = System.currentTimeMillis() to r
+        return r
+    }
+
+    private fun buildSecurity(ctx: Context): SecurityReport {
         val list = ArrayList<CheckItem>()
         val kg = ctx.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         val secure = kg.isDeviceSecure
@@ -102,6 +112,16 @@ object Extras {
         val recent = Build.VERSION.SDK_INT >= 33
         list.add(CheckItem("Version d'Android récente", recent,
             "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})", 1))
+
+        val x = runCatching { Insights.securityExtras(ctx) }.getOrNull()
+        if (x != null) {
+            list.add(CheckItem("Services d'accessibilité", x.accessibility.isEmpty(),
+                if (x.accessibility.isEmpty()) "Aucun service tiers actif" else "Actifs : " + x.accessibility.joinToString(", "), 2))
+            list.add(CheckItem("Applications administrateur", x.admins.isEmpty(),
+                if (x.admins.isEmpty()) "Aucune application administrateur" else "Administrateurs : " + x.admins.joinToString(", "), 2))
+            list.add(CheckItem("Applications hors Play Store", x.sideloaded.size <= 3,
+                if (x.sideloaded.isEmpty()) "Toutes viennent du Play Store" else "${x.sideloaded.size} application(s) : " + x.sideloaded.take(5).joinToString(", "), 1))
+        }
         return SecurityReport(list)
     }
 

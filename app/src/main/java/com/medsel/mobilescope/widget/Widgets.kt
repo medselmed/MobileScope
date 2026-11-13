@@ -10,11 +10,18 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.TrafficStats
+import android.view.View
 import android.widget.RemoteViews
 import com.medsel.mobilescope.R
 import com.medsel.mobilescope.data.Collectors
 import com.medsel.mobilescope.data.Extras
+import com.medsel.mobilescope.data.Fmt
 import com.medsel.mobilescope.data.History
+import com.medsel.mobilescope.data.Insights
+import com.medsel.mobilescope.data.Prefs
 import com.medsel.mobilescope.data.Tr
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -124,6 +131,63 @@ class BatteryWidget : BaseWidget() {
         val go = launch(ctx)
         if (go != null) rv.setOnClickPendingIntent(R.id.w_bat_root, go)
         rv.setOnClickPendingIntent(R.id.w_bat_status, refresh(ctx, ids))
+        return rv
+    }
+}
+
+/** Widget « Réseau » : type de connexion, trafic depuis le démarrage et forfait data (si défini). */
+class NetworkWidget : BaseWidget() {
+    override fun build(ctx: Context, ids: IntArray): RemoteViews {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        val type = when {
+            caps == null -> "Hors ligne"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Données mobiles"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "Autre"
+        }
+        val rx = TrafficStats.getTotalRxBytes().coerceAtLeast(0)
+        val tx = TrafficStats.getTotalTxBytes().coerceAtLeast(0)
+        val rv = RemoteViews(ctx.packageName, R.layout.widget_network)
+        rv.setTextViewText(R.id.w_net_label, Tr.t("Réseau"))
+        rv.setTextViewText(R.id.w_net_type, Tr.t(type))
+        rv.setTextViewText(R.id.w_net_detail, "↓ " + Fmt.bytes(rx) + "   ↑ " + Fmt.bytes(tx))
+        val cap = Insights.capBytes(ctx)
+        val used = if (cap > 0L) Insights.mobileUsedSince(ctx, Insights.cycleStart(Prefs.capCycleDay(ctx))) else null
+        if (cap > 0L && used != null) {
+            val pct = (used * 100 / cap).toInt()
+            val col = if (pct >= 100) 0xFFFF5C5C.toInt() else if (pct >= 80) 0xFFFFB020.toInt() else 0xFF2DD4F0.toInt()
+            rv.setViewVisibility(R.id.w_net_ring, View.VISIBLE)
+            rv.setImageViewBitmap(R.id.w_net_ring, WidgetArt.ring(pct.coerceAtMost(100), col, 220, "$pct%"))
+            rv.setTextViewText(R.id.w_net_plan, Tr.t("Forfait : ") + Fmt.bytes(used) + " / " + Fmt.bytes(cap))
+        } else {
+            rv.setViewVisibility(R.id.w_net_ring, View.GONE)
+            rv.setTextViewText(R.id.w_net_plan, Tr.t("Depuis le démarrage"))
+        }
+        rv.setTextViewText(R.id.w_net_time, Tr.t("Mis à jour à ") + now())
+        val go = launch(ctx)
+        if (go != null) rv.setOnClickPendingIntent(R.id.w_net_root, go)
+        rv.setOnClickPendingIntent(R.id.w_net_type, refresh(ctx, ids))
+        return rv
+    }
+}
+
+/** Widget « Stockage » : anneau d'occupation et espace libre. */
+class StorageWidget : BaseWidget() {
+    override fun build(ctx: Context, ids: IntArray): RemoteViews {
+        val st = Collectors.storage(ctx, false)
+        val rv = RemoteViews(ctx.packageName, R.layout.widget_storage)
+        val pct = (st.usedFrac * 100).toInt()
+        val col = if (pct >= 90) 0xFFFF5C5C.toInt() else 0xFFFFB020.toInt()
+        rv.setImageViewBitmap(R.id.w_sto_ring, WidgetArt.ring(pct, col, 260))
+        rv.setTextViewText(R.id.w_sto_label, Tr.t("Stockage"))
+        rv.setTextViewText(R.id.w_sto_free, Fmt.bytes(st.free) + " " + Tr.t("libres"))
+        rv.setTextViewText(R.id.w_sto_detail, Fmt.bytes(st.used) + " / " + Fmt.bytes(st.total))
+        rv.setTextViewText(R.id.w_sto_time, Tr.t("Mis à jour à ") + now())
+        val go = launch(ctx)
+        if (go != null) rv.setOnClickPendingIntent(R.id.w_sto_root, go)
+        rv.setOnClickPendingIntent(R.id.w_sto_free, refresh(ctx, ids))
         return rv
     }
 }

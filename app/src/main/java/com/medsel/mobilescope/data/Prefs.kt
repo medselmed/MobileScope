@@ -81,6 +81,24 @@ object Prefs {
     fun autoCheckUpdates(ctx: Context): Boolean = settings(ctx).getBoolean("auto_check_updates", true)
     fun saveAutoCheckUpdates(ctx: Context, v: Boolean) { settings(ctx).edit().putBoolean("auto_check_updates", v).apply() }
 
+
+    // ---------- v3 : ordre des cartes, forfait data, objectifs ----------
+    fun moduleOrder(ctx: Context): List<String> =
+        (settings(ctx).getString("module_order", "") ?: "").split(',').filter { it.isNotBlank() }
+    fun saveModuleOrder(ctx: Context, v: List<String>) { settings(ctx).edit().putString("module_order", v.joinToString(",")).apply() }
+
+    /** Forfait mensuel en Mo (0 = désactivé). */
+    fun dataCapMb(ctx: Context): Int = settings(ctx).getInt("data_cap_mb", 0)
+    fun saveDataCapMb(ctx: Context, v: Int) { settings(ctx).edit().putInt("data_cap_mb", v).apply() }
+
+    /** Jour du mois où le forfait se renouvelle (1 à 28). */
+    fun capCycleDay(ctx: Context): Int = settings(ctx).getInt("cap_cycle_day", 1)
+    fun saveCapCycleDay(ctx: Context, v: Int) { settings(ctx).edit().putInt("cap_cycle_day", v).apply() }
+
+    /** Objectif de temps d'écran quotidien, en minutes. */
+    fun screenGoalMin(ctx: Context): Int = settings(ctx).getInt("screen_goal_min", 180)
+    fun saveScreenGoalMin(ctx: Context, v: Int) { settings(ctx).edit().putInt("screen_goal_min", v).apply() }
+
     /** Réinitialise uniquement les préférences d'affichage ; le compte Google n'est pas touché. */
     fun resetSettings(ctx: Context) { settings(ctx).edit().clear().apply() }
 

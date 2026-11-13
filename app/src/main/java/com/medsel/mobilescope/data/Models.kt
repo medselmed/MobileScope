@@ -80,13 +80,20 @@ object Fmt {
     /** true = unités décimales (1 Go = 1000 Mo), false = binaires (1 Go = 1024 Mo). */
     @Volatile var decimal: Boolean = false
 
-    /** true = interface en anglais (unités et durées). */
-    @Volatile var english: Boolean = false
+    /** Langue de l'interface : "fr", "en" ou "ar". */
+    @Volatile var lang: String = "fr"
+
+    /** Vrai si l'interface n'est pas en français (utilisé pour les en-têtes d'export). */
+    val english: Boolean get() = lang != "fr"
 
     fun bytes(b: Long): String {
         val base = if (decimal) 1000.0 else 1024.0
-        if (b < base) return if (english) "$b B" else "$b o"
-        val units = if (english) arrayOf("KB", "MB", "GB", "TB") else arrayOf("Ko", "Mo", "Go", "To")
+        if (b < base) return when (lang) { "ar" -> "$b ب"; "en" -> "$b B"; else -> "$b o" }
+        val units = when (lang) {
+            "en" -> arrayOf("KB", "MB", "GB", "TB")
+            "ar" -> arrayOf("ك.ب", "م.ب", "غ.ب", "ت.ب")
+            else -> arrayOf("Ko", "Mo", "Go", "To")
+        }
         var v = b.toDouble()
         var i = -1
         while (v >= base && i < units.lastIndex) { v /= base; i++ }
@@ -94,12 +101,17 @@ object Fmt {
     }
 
     fun duration(sec: Long): String {
+        val u = when (lang) {
+            "en" -> arrayOf("d", "h", "min", "s")
+            "ar" -> arrayOf("ي", "س", "د", "ث")
+            else -> arrayOf("j", "h", "min", "s")
+        }
         val d = sec / 86400; val h = (sec % 86400) / 3600; val m = (sec % 3600) / 60; val s = sec % 60
         return when {
-            d > 0 -> if (english) "$d d $h h" else "$d j $h h"
-            h > 0 -> "$h h ${m.toString().padStart(2, '0')} min"
-            m > 0 -> "$m min ${s.toString().padStart(2, '0')} s"
-            else -> "$s s"
+            d > 0 -> "$d ${u[0]} $h ${u[1]}"
+            h > 0 -> "$h ${u[1]} ${m.toString().padStart(2, '0')} ${u[2]}"
+            m > 0 -> "$m ${u[2]} ${s.toString().padStart(2, '0')} ${u[3]}"
+            else -> "$s ${u[3]}"
         }
     }
 

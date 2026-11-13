@@ -6,4 +6,7 @@
     <string name="widget_ram">RAM</string>
     <string name="widget_storage">Stockage</string>
     <string name="widget_battery">Batterie</string>
+    <string name="widget_network_desc">Type de connexion, trafic et forfait data.</string>
+    <string name="widget_storage_desc">Occupation du stockage et espace libre.</string>
+    <string name="widget_network">Réseau</string>
 </resources>

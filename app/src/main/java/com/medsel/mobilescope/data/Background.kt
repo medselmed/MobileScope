@@ -49,10 +49,10 @@ object Alerts {
     private const val CHANNEL = "mobilescope_alerts"
     private const val GAP_MS = 6 * 3_600_000L
 
-    private fun may(ctx: Context, key: String): Boolean {
+    private fun may(ctx: Context, key: String, gap: Long = GAP_MS): Boolean {
         val sp = ctx.getSharedPreferences("alerts", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
-        if (now - sp.getLong(key, 0L) < GAP_MS) return false
+        if (now - sp.getLong(key, 0L) < gap) return false
         sp.edit().putLong(key, now).apply()
         return true
     }
@@ -66,6 +66,17 @@ object Alerts {
         val usedPct = (st.usedFrac * 100).toInt()
         if (usedPct >= Prefs.alertStorage(ctx) && may(ctx, "storage")) {
             notify(ctx, 2, "Stockage presque plein", "$usedPct % utilisés. Libérez de l'espace pour garder un téléphone fluide.")
+        }
+        val cap = Insights.capBytes(ctx)
+        if (cap > 0L) {
+            val used = Insights.mobileUsedSince(ctx, Insights.cycleStart(Prefs.capCycleDay(ctx)))
+            if (used != null) {
+                if (used >= cap && may(ctx, "cap100", 24 * 3_600_000L)) {
+                    notify(ctx, 4, "Forfait data dépassé", "Vous avez consommé ${Fmt.bytes(used)} en données mobiles ce mois-ci.")
+                } else if (used * 100 >= cap * 80 && may(ctx, "cap80", 24 * 3_600_000L)) {
+                    notify(ctx, 5, "Forfait data bientôt atteint", "${Fmt.bytes(used)} consommés sur ${Fmt.bytes(cap)}.")
+                }
+            }
         }
         if (!bat.charging && bat.percent <= Prefs.alertBattery(ctx) && may(ctx, "battery")) {
             notify(ctx, 3, "Batterie faible", "Il reste ${bat.percent} %. Pensez à brancher le chargeur.")

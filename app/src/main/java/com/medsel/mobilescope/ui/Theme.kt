@@ -33,11 +33,18 @@ fun MobileScopeTheme(
     content: @Composable () -> Unit
 ) {
     val useDark = when (themeMode) {
-        "dark" -> true
+        "dark", "amoled" -> true
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    val base = if (useDark) Dark else Light
+    val base = when {
+        themeMode == "amoled" -> Dark.copy(
+            background = Color.Black, surface = Color(0xFF0A0D12),
+            surfaceVariant = Color(0xFF151A22), outline = Color(0xFF1F2530)
+        )
+        useDark -> Dark
+        else -> Light
+    }
     val accent = when (accentMode) {
         "blue" -> Color(0xFF2677F5)
         "green" -> Color(0xFF159B73)
