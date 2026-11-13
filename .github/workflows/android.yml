@@ -3,7 +3,7 @@ name: Build & publier l'APK
 # Le wrapper Gradle et ses propriétés se trouvent dans gradle/wrapper/.
 on:
   push:
-    branches: [main]
+    branches: [main, pro-update]
   pull_request:
   workflow_dispatch:
 
@@ -35,11 +35,22 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Compiler l'APK release
+        shell: bash
         env:
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
-        run: ./gradlew --no-daemon :app:assembleRelease
+        run: ./gradlew --no-daemon :app:assembleRelease 2>&1 | tee build.log
+
+      - name: Publier le journal en cas d'échec
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/pro-update'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          grep -nE "^e: |error:|What went wrong|FAILED" build.log | head -120 > errors.txt || true
+          gh release create "pro-fail-$BUILD_NUMBER" errors.txt build.log --prerelease \
+            --title "Échec du build $BUILD_NUMBER" --notes "Journal de compilation." --target pro-update
 
       - name: Conserver l'APK compilé
         uses: actions/upload-artifact@v4
@@ -60,3 +71,16 @@ jobs:
           gh release create "v1.0.$BUILD_NUMBER" "$APK#MobileScope-1.0.$BUILD_NUMBER.apk" \
             --title "MobileScope 1.0.$BUILD_NUMBER" \
             --notes "Compilation automatique depuis le commit $GITHUB_SHA."
+
+      - name: Publier la pré-version (branche pro-update)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/pro-update'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          gh release create "pro-build-$BUILD_NUMBER" "$APK#MobileScope-1.0.$BUILD_NUMBER.apk" \
+            --prerelease --target pro-update \
+            --title "MobileScope 1.0.$BUILD_NUMBER (pro)" \
+            --notes "Pré-version de la branche pro-update."

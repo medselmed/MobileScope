@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">MobileScope</string>
+    <string name="widget_health_title">MobileScope · Santé</string>
+    <string name="widget_health_desc">Score de santé, mémoire, stockage et batterie en un coup d\'œil.</string>
+    <string name="widget_battery_desc">Niveau, état, température et tension de la batterie.</string>
+    <string name="widget_ram">RAM</string>
+    <string name="widget_storage">Stockage</string>
+    <string name="widget_battery">Batterie</string>
 </resources>

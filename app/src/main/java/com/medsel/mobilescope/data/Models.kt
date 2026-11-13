@@ -77,19 +77,26 @@ data class SmsReport(
 )
 
 object Fmt {
+    /** true = unités décimales (1 Go = 1000 Mo), false = binaires (1 Go = 1024 Mo). */
+    @Volatile var decimal: Boolean = false
+
+    /** true = interface en anglais (unités et durées). */
+    @Volatile var english: Boolean = false
+
     fun bytes(b: Long): String {
-        if (b < 1024) return "$b o"
-        val units = arrayOf("Ko", "Mo", "Go", "To")
+        val base = if (decimal) 1000.0 else 1024.0
+        if (b < base) return if (english) "$b B" else "$b o"
+        val units = if (english) arrayOf("KB", "MB", "GB", "TB") else arrayOf("Ko", "Mo", "Go", "To")
         var v = b.toDouble()
         var i = -1
-        while (v >= 1024 && i < units.lastIndex) { v /= 1024; i++ }
+        while (v >= base && i < units.lastIndex) { v /= base; i++ }
         return String.format(Locale.getDefault(), if (v >= 100) "%.0f %s" else "%.1f %s", v, units[i])
     }
 
     fun duration(sec: Long): String {
         val d = sec / 86400; val h = (sec % 86400) / 3600; val m = (sec % 3600) / 60; val s = sec % 60
         return when {
-            d > 0 -> "$d j $h h"
+            d > 0 -> if (english) "$d d $h h" else "$d j $h h"
             h > 0 -> "$h h ${m.toString().padStart(2, '0')} min"
             m > 0 -> "$m min ${s.toString().padStart(2, '0')} s"
             else -> "$s s"

@@ -258,7 +258,8 @@ fun HomeScreen(
     onOpen: (Cat) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDevice: () -> Unit,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onOpenRoute: (String) -> Unit = {}
 ) {
     val ctx = LocalContext.current
     val compactCards = Prefs.compactCards(ctx)
@@ -336,6 +337,8 @@ fun HomeScreen(
                 }
             }
 
+            if (Prefs.showHealthCard(ctx)) HealthMiniCard { onOpenRoute("health") }
+
             SectionTitle("APERÇU DE L'APPAREIL")
             Loaded(deviceState) { device ->
                 Panel {
@@ -367,7 +370,8 @@ fun HomeScreen(
                 }
             }
 
-            QuickControlsCard()
+            AdvancedToolsRow(onOpenRoute)
+            if (Prefs.showQuickControls(ctx)) QuickControlsCard()
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -970,6 +974,7 @@ fun RamScreen(onBack: () -> Unit) {
     val cat = Cat.Ram
     var ram by remember { mutableStateOf<com.medsel.mobilescope.data.RamInfo?>(null) }
     val history = remember { mutableStateListOf<Float>() }
+    val refreshMs = remember { Prefs.refreshMs(ctx) }
     LaunchedEffect(Unit) {
         while (true) {
             val r = withContext(Dispatchers.IO) { runCatching { Collectors.ram(ctx) }.getOrNull() }
@@ -978,7 +983,7 @@ fun RamScreen(onBack: () -> Unit) {
                 history.add(r.usedFrac * 100f)
                 if (history.size > 40) history.removeAt(0)
             }
-            delay(2000)
+            delay(refreshMs.toLong())
         }
     }
     DetailScaffold(cat, onBack, null) {
@@ -990,7 +995,7 @@ fun RamScreen(onBack: () -> Unit) {
             }
             Panel {
                 val samples = history.toList()
-                Text("Utilisation de la RAM · 80 dernières secondes", fontSize = 13.sp, color = muted)
+                Text("Utilisation de la RAM · ${40 * refreshMs / 1000} dernières secondes", fontSize = 13.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
                 Sparkline(samples, cat.color, Modifier.fillMaxWidth().height(100.dp), minValue = 0f, maxValue = 100f)
                 Spacer(Modifier.height(8.dp))
@@ -999,7 +1004,7 @@ fun RamScreen(onBack: () -> Unit) {
                     Text("Actuel ${"%.1f".format(Locale.getDefault(), r.usedFrac * 100f)} %", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cat.color)
                     Text("Max. ${samples.maxOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} %", fontSize = 11.sp, color = muted)
                 }
-                Text("Échelle fixe : 0 à 100 % · un point toutes les 2 secondes.", fontSize = 11.sp, color = muted)
+                Text("Échelle fixe : 0 à 100 % · un point toutes les ${refreshMs / 1000} secondes.", fontSize = 11.sp, color = muted)
             }
             TilesGrid(listOf(
                 Tile("Totale", Fmt.bytes(r.total), Icons.Rounded.Memory),
@@ -1020,6 +1025,7 @@ fun BatteryScreen(onBack: () -> Unit) {
     val cat = Cat.Battery
     var b by remember { mutableStateOf<com.medsel.mobilescope.data.BatteryInfo?>(null) }
     val history = remember { mutableStateListOf<Float>() }
+    val stepSec = remember { Prefs.refreshMs(ctx) / 1000 + 1 }
     LaunchedEffect(Unit) {
         while (true) {
             val r = withContext(Dispatchers.IO) { runCatching { Collectors.battery(ctx) }.getOrNull() }
@@ -1028,7 +1034,7 @@ fun BatteryScreen(onBack: () -> Unit) {
                 history.add(r.tempC)
                 if (history.size > 40) history.removeAt(0)
             }
-            delay(3000)
+            delay(stepSec * 1000L)
         }
     }
     DetailScaffold(cat, onBack, null) {
@@ -1040,7 +1046,7 @@ fun BatteryScreen(onBack: () -> Unit) {
             }
             Panel {
                 val samples = history.toList()
-                Text("Température de la batterie · 2 dernières minutes", fontSize = 13.sp, color = muted)
+                Text("Température de la batterie · ${40 * stepSec / 60} dernières minutes", fontSize = 13.sp, color = muted)
                 Spacer(Modifier.height(8.dp))
                 Sparkline(samples, cat.color, Modifier.fillMaxWidth().height(96.dp), minValue = 10f, maxValue = 60f)
                 Spacer(Modifier.height(8.dp))
@@ -1049,7 +1055,7 @@ fun BatteryScreen(onBack: () -> Unit) {
                     Text("Actuelle ${"%.1f".format(Locale.getDefault(), r.tempC)} °C", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = cat.color)
                     Text("Max. ${samples.maxOrNull()?.let { "%.1f".format(Locale.getDefault(), it) } ?: "—"} °C", fontSize = 11.sp, color = muted)
                 }
-                Text("Échelle fixe : 10 à 60 °C · un point toutes les 3 secondes.", fontSize = 11.sp, color = muted)
+                Text("Échelle fixe : 10 à 60 °C · un point toutes les ${stepSec} secondes.", fontSize = 11.sp, color = muted)
             }
             TilesGrid(listOf(
                 Tile("Température", "${"%.1f".format(Locale.getDefault(), r.tempC)} °C", Icons.Rounded.Thermostat),

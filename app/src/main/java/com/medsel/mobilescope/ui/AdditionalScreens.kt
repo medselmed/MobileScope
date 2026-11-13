@@ -28,7 +28,8 @@ import com.medsel.mobilescope.data.Prefs
 fun SettingsScreen(
     onBack: () -> Unit,
     onThemeChanged: (String) -> Unit,
-    onAccentChanged: (String) -> Unit
+    onAccentChanged: (String) -> Unit,
+    onLanguageChanged: (String) -> Unit = {}
 ) {
     val ctx = LocalContext.current
     var theme by remember { mutableStateOf(Prefs.theme(ctx)) }
@@ -133,6 +134,8 @@ fun SettingsScreen(
                     })
                 }
             }
+
+            AdvancedSettings(onLanguageChanged)
 
             SectionTitle("RÉGLAGES DU TÉLÉPHONE")
             SettingsAction(
